@@ -25,6 +25,21 @@ class ConfluencePage:
 
 class ConfluenceClient:
     def __init__(self) -> None:
+        missing = [
+            name
+            for name, val in [
+                ("CONFLUENCE_BASE_URL", settings.confluence_base_url),
+                ("CONFLUENCE_EMAIL", settings.confluence_email),
+                ("CONFLUENCE_API_TOKEN", settings.confluence_api_token),
+                ("CONFLUENCE_SPACE_KEY", settings.confluence_space_key),
+            ]
+            if not val
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Missing Confluence config for ingestion: {', '.join(missing)}. "
+                f"These are only needed to run reindex.py, not to serve queries."
+            )
         self._base = settings.confluence_base_url.rstrip("/")
         self._auth = (settings.confluence_email, settings.confluence_api_token)
 

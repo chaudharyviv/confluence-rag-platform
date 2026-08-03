@@ -72,7 +72,7 @@ def _commit_index() -> None:
     STORAGE_MODE=git - i.e. only on hosts whose local disk doesn't persist."""
     paths = [settings.chroma_persist_dir, settings.bm25_index_path]
     try:
-        subprocess.run(["git", "add", *paths], check=True)
+        subprocess.run(["git", "add", "-f", *paths], check=True)
         result = subprocess.run(
             ["git", "commit", "-m", "chore: scheduled reindex"], capture_output=True, text=True
         )

@@ -34,10 +34,13 @@ class Settings:
     claude_router_model: str = field(default_factory=lambda: _get("CLAUDE_ROUTER_MODEL", "claude-haiku-4-5-20251001"))
 
     # --- Confluence source ---
-    confluence_base_url: str = field(default_factory=lambda: _get("CONFLUENCE_BASE_URL", required=True))
-    confluence_email: str = field(default_factory=lambda: _get("CONFLUENCE_EMAIL", required=True))
-    confluence_api_token: str = field(default_factory=lambda: _get("CONFLUENCE_API_TOKEN", required=True))
-    confluence_space_key: str = field(default_factory=lambda: _get("CONFLUENCE_SPACE_KEY", required=True))
+    # Not required=True here: only reindex.py needs these, and the deployed
+    # app shouldn't have to carry Confluence credentials just to answer
+    # queries. ConfluenceClient validates these itself when actually used.
+    confluence_base_url: str = field(default_factory=lambda: _get("CONFLUENCE_BASE_URL", ""))
+    confluence_email: str = field(default_factory=lambda: _get("CONFLUENCE_EMAIL", ""))
+    confluence_api_token: str = field(default_factory=lambda: _get("CONFLUENCE_API_TOKEN", ""))
+    confluence_space_key: str = field(default_factory=lambda: _get("CONFLUENCE_SPACE_KEY", ""))
 
     # --- Domain / routing ---
     domain_description: str = field(default_factory=lambda: _get(

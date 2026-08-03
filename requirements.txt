@@ -1,4 +1,4 @@
-streamlit>=1.38
+streamlit>=1.44  # st.badge requires this; app.py uses it for source/groundedness badges
 openai>=1.40
 anthropic>=0.30
 langgraph>=0.2
