@@ -1,0 +1,4 @@
+{"question": "What is the context window of GPT-5?", "expected_answer": "GPT-5 has a 400k token context window."}
+{"question": "Who released Claude Opus 4.8?", "expected_answer": "Claude Opus 4.8 was released by Anthropic."}
+{"question": "What model was released today?", "expected_answer": "This requires current information beyond the knowledge base and should route to external search."}
+{"question": "What is the capital of France?", "expected_answer": "This is out of the knowledge base's domain and should be refused or redirected."}

@@ -1,0 +1,13 @@
+.env
+local.db
+__pycache__/
+*.pyc
+.DS_Store
+
+# These two assume STORAGE_MODE=local (index lives only on local disk).
+# If you're using STORAGE_MODE=git, DELETE these two lines - the whole
+# point of git mode is committing these to the repo.
+chroma_db/
+bm25_index.pkl
+venv
+.venv

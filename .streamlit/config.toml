@@ -1,0 +1,54 @@
+# Professional, neutral theme (light + dark, user-switchable). Blue-600
+# primary on a slate neutral palette - a common, low-risk "enterprise SaaS"
+# look that stays legible in both modes.
+[theme]
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+showSidebarBorder = true
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseFontSize = 15
+headingFontSizes = ["32px", "26px", "22px", "18px", "16px", "14px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#2563EB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+textColor = "#0F172A"
+borderColor = "#E2E8F0"
+codeBackgroundColor = "#F1F5F9"
+codeTextColor = "#0F172A"
+dataframeBorderColor = "#E2E8F0"
+dataframeHeaderBackgroundColor = "#F8FAFC"
+greenColor = "#16A34A"
+redColor = "#DC2626"
+orangeColor = "#EA580C"
+grayColor = "#64748B"
+
+[theme.dark]
+primaryColor = "#3B82F6"
+backgroundColor = "#0B1120"
+secondaryBackgroundColor = "#111827"
+textColor = "#E2E8F0"
+borderColor = "#1F2937"
+codeBackgroundColor = "#111827"
+codeTextColor = "#E2E8F0"
+dataframeBorderColor = "#1F2937"
+dataframeHeaderBackgroundColor = "#111827"
+greenColor = "#22C55E"
+redColor = "#F87171"
+orangeColor = "#FB923C"
+grayColor = "#94A3B8"
+
+[theme.light.sidebar]
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#F1F5F9"
+borderColor = "#E2E8F0"
+
+[theme.dark.sidebar]
+backgroundColor = "#111827"
+secondaryBackgroundColor = "#0B1120"
+borderColor = "#1F2937"

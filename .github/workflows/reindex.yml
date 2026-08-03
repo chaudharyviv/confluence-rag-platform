@@ -1,0 +1,42 @@
+# Only relevant if STORAGE_MODE=git (e.g. deploying to Streamlit Community
+# Cloud, which has ephemeral disk). If you're running STORAGE_MODE=local
+# somewhere with a persistent volume, you don't need this - just run
+# `python reindex.py` there directly (manually or your own cron).
+name: Scheduled reindex
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # nightly at 02:00 UTC - Confluence content doesn't change per-minute
+  workflow_dispatch: {}    # allows manually triggering a reindex from the Actions tab
+
+jobs:
+  reindex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Reindex
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_SPACE_KEY: ${{ secrets.CONFLUENCE_SPACE_KEY }}
+          DOMAIN_DESCRIPTION: ${{ secrets.DOMAIN_DESCRIPTION }}
+          STORAGE_MODE: git
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}  # only needed if you opted into Neon
+        run: |
+          git config user.name "reindex-bot"
+          git config user.email "actions@github.com"
+          python reindex.py

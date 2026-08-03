@@ -1,0 +1,11 @@
+streamlit>=1.38
+openai>=1.40
+anthropic>=0.30
+langgraph>=0.2
+chromadb>=0.5
+rank_bm25>=0.2.2
+sentence-transformers>=3.0
+beautifulsoup4>=4.12
+requests>=2.32
+SQLAlchemy>=2.0
+python-dotenv>=1.0
