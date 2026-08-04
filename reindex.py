@@ -69,8 +69,19 @@ def run(full: bool = False) -> None:
 
 def _commit_index() -> None:
     """Commit the rebuilt index artifacts back to the repo. Only runs when
-    STORAGE_MODE=git - i.e. only on hosts whose local disk doesn't persist."""
+    STORAGE_MODE=git - i.e. only on hosts whose local disk doesn't persist.
+
+    Also commits the sqlite DB (if that's what DATABASE_URL points to) -
+    it holds page_versions, which is what makes incremental sync work at
+    all. Without this, a GitHub Action checks out a fresh repo every run
+    with no memory of what was already synced, and re-embeds every page
+    from scratch every time instead of just what changed. If DATABASE_URL
+    points at Postgres/Neon instead, that state already persists on its
+    own and this is skipped - only the sqlite file needs this treatment."""
     paths = [settings.chroma_persist_dir, settings.bm25_index_path]
+    if settings.database_url.startswith("sqlite:///"):
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        paths.append(db_path)
     try:
         subprocess.run(["git", "add", "-f", *paths], check=True)
         result = subprocess.run(
