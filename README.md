@@ -223,7 +223,7 @@ Write your own golden set as you author Confluence pages - a couple of QA pairs 
 - Live/real-time indexing - nightly-refresh-via-Git is the free-tier trade-off; a real problem with that cadence is the trigger to move to an always-on host, not before.
 - A wired-up `SERPAPI_API_KEY` search call for the external-fallback path - `needs_external` questions currently get Claude's general knowledge, explicitly labeled unverified in the UI and audit log.
 
-See §7 of [`production-rag-architecture.md`](production-rag-architecture.md) for the fuller rationale and what would trigger building each of these.
+See [`production-rag-architecture.md`](production-rag-architecture.md) for the fuller rationale and what would trigger building each of these.
 
 ## Contributing
 
