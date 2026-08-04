@@ -68,6 +68,14 @@ class Settings:
     rerank_top_k: int = field(default_factory=lambda: int(_get("RERANK_TOP_K", "5")))
     reranker_model: str = field(default_factory=lambda: _get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
     rrf_k: int = field(default_factory=lambda: int(_get("RRF_K", "60")))  # standard RRF constant
+    # ms-marco-MiniLM cross-encoders are trained as a regression on MS MARCO;
+    # scores aren't a calibrated 0-1 probability, but positive vs negative is
+    # a reasonable rough cutoff in practice for "is the top match relevant at
+    # all." Tune this against your own eval set if it's letting weak matches
+    # through or bypassing genuinely well-covered questions.
+    rerank_relevance_threshold: float = field(
+        default_factory=lambda: float(_get("RERANK_RELEVANCE_THRESHOLD", "0.0"))
+    )
 
     # --- Optional external fallback ---
     serpapi_api_key: str = field(default_factory=lambda: _get("SERPAPI_API_KEY", ""))
