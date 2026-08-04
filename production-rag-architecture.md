@@ -1,6 +1,6 @@
 # Production Confluence RAG — Architecture Design
 
-**Status:** Design phase (pre-code)
+**Status:** Implemented. This is the original design doc, kept as the design rationale — the "why" behind each choice. See [`README.md`](README.md) for the system as built (setup, config reference, current architecture diagrams). A few decisions changed during implementation; those are called out inline as **Implementation note** callouts rather than silently edited away.
 **Supersedes:** `Confluence-Rag`, `Confluence-Serpapi-GraphRag`
 **Fits roadmap:** Aug 2026 depth phase — production hybrid RAG + Ragas eval
 
@@ -36,13 +36,14 @@
                                                     ▼
 ┌───────────┐   ┌───────────────────────────────┴───────────────────┐
 │  Streamlit  │──▶│         LangGraph Orchestrator (in-process)            │
-│  app        │   │  Router(Claude) → HybridRetrieve(Chroma dense +      │
-│  (laptop,   │   │  BM25 sparse, RRF fused in code) → Rerank(small HF    │
-│  Community  │   │  cross-encoder) → Generate(Claude) → Groundedness    │
-│  Cloud,     │   │  (Claude) → Log → Respond                             │
-│  Docker     │   └───────────────────┬─────────────────────────────────┘
-│  anywhere)  │                           │
-└───────────┘                           │ writes audit rows
+│  app        │   │  HybridRetrieve(Chroma dense + BM25 sparse, RRF      │
+│  (laptop,   │   │  fused in code) → Rerank(small HF cross-encoder)     │
+│  Community  │   │  → confident match? → Generate(Claude); weak/empty   │
+│  Cloud,     │   │  → Router(Claude) → Generate | ExternalSearch |      │
+│  Docker     │   │  Refuse → Groundedness(Claude) → Log → Respond       │
+│  anywhere)  │   └───────────────────┬─────────────────────────────────┘
+└───────────┘                           │
+                                          │ writes audit rows
        │ DATABASE_URL env var                │ (same DB, any environment)
        ▼                                        ▼
 ┌───────────────────────────────────────────────────┐
@@ -93,10 +94,12 @@ Everything host-specific is a config value (`STORAGE_MODE`, `DATABASE_URL`, API 
 - Rerank fused top-20 down to top 5 with a **small** HuggingFace cross-encoder — `cross-encoder/ms-marco-MiniLM-L-6-v2` (~22M params, CPU-friendly, loads in well under 100MB) rather than `bge-reranker-v2-m3` (568M params — would blow the 1GB memory ceiling alongside everything else running in the same process). If eval numbers later show this smaller model is the retrieval bottleneck, that's a signed-off trade-off to revisit, not a guess.
 
 ### 3.5 Routing — LLM-based, not keyword lists
-- Replace `is_engineering_question()` and `evidence_is_sufficient()` (the `"how to" → always False` bug) with a single LangGraph router node: a Claude call (Haiku-tier is enough for a classification task) with a **structured output schema** (`in_domain: bool`, `confidence: float`, `needs_external: bool`).
+- Replace `is_engineering_question()` and `evidence_is_sufficient()` (the `"how to" → always False` bug) with a Claude router node (Haiku-tier is enough for a classification task) with a **structured output schema** (`in_domain: bool`, `confidence: float`, `needs_external: bool`).
 - The domain itself is a config value, not hardcoded logic: `DOMAIN_DESCRIPTION` env var (e.g. *"the global LLM landscape — models, providers, release dates, context windows, licensing, benchmarks"*) feeds the router's classification prompt. Same code works whatever topic the Confluence space actually covers.
 - For a fast-moving topic like this one, the `needs_external` path is doing real work, not just demonstrating a pattern: your curated pages will genuinely lag new model releases, so "answer from my notes" vs. "this needs a live check" is a real distinction the router has to get right — worth reflecting that in the eval set (a few golden questions that *should* route external).
 - Structured output means you get a typed, validated decision instead of substring matching — and it's auditable (log the classification + confidence per query).
+
+> **Implementation note — router moved to run *after* retrieval, not before.** The original plan below had the Claude router run first and gate whether retrieval happened at all. In practice that misrouted "current flagship"-style phrasing to `needs_external` even when the knowledge base held an exact, current answer — the router was guessing at retrievability without checking it. `graph.py` runs `retrieve → rerank` first, and only calls the router as a fallback classifier when the top reranked score is at or below `RERANK_RELEVANCE_THRESHOLD` (weak or empty match). At that point the real open question — "is this out of scope, or does it need live info?" — is one retrieval strength genuinely can't answer by itself, which is exactly what the router is for. See the `graph.py` module docstring for the full rationale, and §5 below for the as-built state machine (kept for reference; the current diagram lives in `README.md`).
 
 ### 3.6 Groundedness Verification (new — neither repo had this)
 - After generation, a second LLM pass checks each sentence of the answer against the cited chunks and returns a per-sentence support label.
@@ -104,8 +107,10 @@ Everything host-specific is a config value (`STORAGE_MODE`, `DATABASE_URL`, API 
 - This is the single highest-leverage addition for a banking-adjacent portfolio piece: it's the difference between "a RAG demo" and "a RAG system that knows what it doesn't know."
 
 ### 3.7 External Fallback (kept, re-architected)
-- SerpAPI fallback stays — it's a legitimately useful feature — but it's now reached only via the router's `needs_external` decision, not a hardcoded "procedural questions always go external" rule.
+- The external path stays — it's a legitimately useful feature — but it's now reached only via the router's `needs_external` decision, not a hardcoded "procedural questions always go external" rule.
 - External answers are visually/structurally distinguished from internal ones in the UI (already partially done in repo2 — worth keeping).
+
+> **Implementation note — SerpAPI isn't wired to a live call yet.** `SERPAPI_API_KEY` exists as a config value, but `llm.generate_external_answer()` currently answers from Claude's general knowledge, explicitly instructed to flag itself as unsourced/possibly-stale — it does not call SerpAPI. The router → external-path plumbing described above is fully built; only the actual search call is deferred. Wiring a real SerpAPI (or similar) call into that function is a self-contained follow-up, not a design change.
 
 ### 3.8 Evaluation (Ragas) — CI gate
 - Build a golden set of 30–50 QA pairs from real Confluence content (question, expected answer, expected source page).
@@ -163,6 +168,8 @@ eval_runs(id, run_ts, context_precision, context_recall, faithfulness, answer_re
 
 ## 5. LangGraph State Machine
 
+**Original plan (superseded — router-first; kept for historical context):**
+
 ```
 START → Router
 Router --in_domain--> HybridRetrieve
@@ -175,6 +182,28 @@ GroundednessCheck --unsupported--> Downgrade → Log → END
 
 ExternalSearch → Generate(external) → Log → END
 ```
+
+**As built (`graph.py`) — retrieval-first, router as fallback classifier:**
+
+```
+START → HybridRetrieve(Chroma dense + rank_bm25 sparse, RRF fused in code) → Rerank(small HF cross-encoder)
+
+Rerank --top score > RERANK_RELEVANCE_THRESHOLD--> Generate(Claude)
+Rerank --weak or empty match--> Router(Claude, structured output)
+
+Router --in_domain--> Generate(Claude)        # router still thinks it's answerable despite weak retrieval
+Router --needs_external--> ExternalSearch
+Router --out_of_domain--> Refuse
+
+Generate(Claude) → GroundednessCheck(Claude)
+GroundednessCheck --supported--> Log → END
+GroundednessCheck --partial/unsupported--> Downgrade answer text → Log → END
+
+ExternalSearch → Log → END
+Refuse → Log → END
+```
+
+Why the change: gating retrieval behind the router meant the router had to guess whether the knowledge base could answer a question *before any search ran* — which misrouted phrasing like "current flagship" externally even when the index had an exact, current answer sitting in it. Running retrieval first makes "did we actually find something good?" the primary signal, and reserves the (slower, Claude-call) router for the genuinely ambiguous case: a weak or empty match, where the open question is *why* nothing relevant came back, not whether it did.
 
 ---
 
@@ -198,16 +227,18 @@ Recommendation: standalone new repo, portfolio-facing on its own merits — a ge
 
 ---
 
-## 8. Build Order (once you confirm this)
+## 8. Build Order (as planned pre-code)
 
-1. Confluence structure-aware parser + chunker (offline script, run locally first)
-2. `config.py` reading `STORAGE_MODE` / `DATABASE_URL` / API keys from env — build this early so nothing downstream hardcodes a path or host
-3. Reindex job: embed (OpenAI) → build Chroma `PersistentClient` index + `bm25_index.pkl`, respecting `STORAGE_MODE`. Get this working fully locally first.
-4. SQLite schema for local dev (`page_versions`, `query_audit_log`, `eval_runs`); confirm the same schema works against Postgres before deploying anywhere
-5. Hybrid retrieval (Chroma dense + rank_bm25 sparse + RRF fusion) + small HF cross-encoder reranking
-6. LangGraph router (Claude, structured output) + generation + groundedness node (Claude)
-7. Ragas golden set + eval harness (run locally, results written to `eval_runs`)
-8. Streamlit UI, tested locally end-to-end before any deployment
-9. Dockerfile — this is what actually buys "runs anywhere": local `docker run`, or push the same image to Render/Railway/Fly.io/a VPS. Streamlit Community Cloud doesn't use the Dockerfile directly (it builds from `requirements.txt`), but keeping both in sync costs little and covers every host.
-10. Pick a deployment target, set `STORAGE_MODE`/`DATABASE_URL` accordingly, wire up the reindex trigger (manual, cron, or GitHub Action) for that target
-11. Observability wiring (LangFuse free tier); retire old repos
+Kept as originally written, for historical context. Status per step, as of this doc's last update:
+
+1. ✅ Confluence structure-aware parser + chunker (offline script, run locally first) — [`parsing.py`](parsing.py)
+2. ✅ `config.py` reading `STORAGE_MODE` / `DATABASE_URL` / API keys from env — [`config.py`](config.py)
+3. ✅ Reindex job: embed (OpenAI) → build Chroma `PersistentClient` index + `bm25_index.pkl`, respecting `STORAGE_MODE` — [`reindex.py`](reindex.py), [`vectorstore.py`](vectorstore.py)
+4. ✅ SQLite schema for local dev (`page_versions`, `query_audit_log`, `eval_runs`) via SQLAlchemy, same schema portable to Postgres — [`db.py`](db.py)
+5. ✅ Hybrid retrieval (Chroma dense + rank_bm25 sparse + RRF fusion) + small HF cross-encoder reranking — [`vectorstore.py`](vectorstore.py), [`reranker.py`](reranker.py)
+6. ✅ Router (Claude, structured output) + generation + groundedness node (Claude) — [`llm.py`](llm.py), [`graph.py`](graph.py). Ordering changed from the original plan: retrieval runs before the router, not after (see §3.5, §5).
+7. ✅ Ragas golden set + eval harness (run locally, results written to `eval_runs`) — [`eval/run_eval.py`](eval/run_eval.py), [`eval/golden_set.jsonl`](eval/golden_set.jsonl)
+8. ✅ Streamlit UI — [`app.py`](app.py)
+9. ⬜ Dockerfile — not yet added. Still the right call for "runs anywhere" via `docker run` on Render/Railway/Fly.io/a VPS; not required for the current local + Streamlit Community Cloud deployment targets.
+10. ✅ Deployment target support: `STORAGE_MODE`/`DATABASE_URL` config knobs, plus a scheduled GitHub Action reindex trigger — [`.github/workflows/reindex.yml`](.github/workflows/reindex.yml)
+11. ⬜ Observability wiring (LangFuse or OpenTelemetry, per §3.9) — not yet added; nothing beyond the `query_audit_log` table exists for tracing today. Old repos retired.
