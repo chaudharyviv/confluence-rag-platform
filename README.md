@@ -6,10 +6,6 @@ A production-shaped Retrieval-Augmented Generation (RAG) platform over a Conflue
 
 See [`production-rag-architecture.md`](production-rag-architecture.md) for the original design rationale (the "why" behind every choice below). This README documents the system as built, plus setup.
 
-## Why this exists
-
-Two earlier repos (`Confluence-Rag`, `Confluence-Serpapi-GraphRag`) had real bugs: a vector store that didn't actually persist, keyword-based domain routing (`is_engineering_question()`, `"how to" → always False`), and a "graph" that was metadata no one ever traversed. This is the production rebuild, with each of those failure modes replaced by something that fails loudly or degrades explicitly instead of silently.
-
 ## Key features
 
 - **Hybrid retrieval** — Chroma (dense, cosine) + `rank_bm25` (sparse), fused in application code with Reciprocal Rank Fusion. Self-hosted Chroma has no built-in hybrid search, so RRF is implemented by hand rather than assumed away.
