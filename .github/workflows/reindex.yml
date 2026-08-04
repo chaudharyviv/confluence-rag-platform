@@ -6,8 +6,8 @@ name: Scheduled reindex
 
 on:
   schedule:
-    - cron: "0 2 * * *"  # nightly at 02:00 UTC - Confluence content doesn't change per-minute
-  workflow_dispatch: {}    # allows manually triggering a reindex from the Actions tab
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
 
 jobs:
   reindex:
@@ -18,13 +18,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - run: pip install -r requirements.txt
-
       - name: Reindex
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -35,7 +32,9 @@ jobs:
           CONFLUENCE_SPACE_KEY: ${{ secrets.CONFLUENCE_SPACE_KEY }}
           DOMAIN_DESCRIPTION: ${{ secrets.DOMAIN_DESCRIPTION }}
           STORAGE_MODE: git
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}  # only needed if you opted into Neon
+          # DATABASE_URL intentionally omitted: not set as a secret, so this
+          # falls through to config.py's sqlite:///./local.db default. Only
+          # add this back (with a Neon URL secret) if you switch off SQLite.
         run: |
           git config user.name "reindex-bot"
           git config user.email "actions@github.com"

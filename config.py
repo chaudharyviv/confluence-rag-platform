@@ -15,7 +15,13 @@ load_dotenv()  # no-op if there's no .env file (e.g. on Streamlit Cloud / CI)
 
 
 def _get(key: str, default: str | None = None, required: bool = False) -> str:
-    val = os.environ.get(key, default)
+    # os.environ.get(key, default) only falls back to `default` when the key
+    # is fully absent - but GitHub Actions sets an env var to an empty string
+    # (not "unset") when you reference ${{ secrets.X }} for a secret that was
+    # never added. That empty string would otherwise silently shadow a real
+    # default (e.g. DATABASE_URL's sqlite:///./local.db), so `or` treats an
+    # empty string the same as missing.
+    val = os.environ.get(key) or default
     if required and not val:
         raise RuntimeError(
             f"Missing required config: {key}. Set it in .env locally, in "
