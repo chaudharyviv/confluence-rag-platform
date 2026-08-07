@@ -36,7 +36,7 @@ class Settings:
     openai_api_key: str = field(default_factory=lambda: _get("OPENAI_API_KEY", required=True))
     anthropic_api_key: str = field(default_factory=lambda: _get("ANTHROPIC_API_KEY", required=True))
     embedding_model: str = field(default_factory=lambda: _get("EMBEDDING_MODEL", "text-embedding-3-small"))
-    claude_model: str = field(default_factory=lambda: _get("CLAUDE_MODEL", "claude-sonnet-4-6"))
+    claude_model: str = field(default_factory=lambda: _get("CLAUDE_MODEL", "claude-sonnet-5"))
     claude_router_model: str = field(default_factory=lambda: _get("CLAUDE_ROUTER_MODEL", "claude-haiku-4-5-20251001"))
 
     # --- Confluence source ---
