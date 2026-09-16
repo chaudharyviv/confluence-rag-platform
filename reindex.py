@@ -52,8 +52,8 @@ def run(full: bool = False) -> None:
             url=page.url,
             html=page.body_html,
         )
-        store.delete_page(page.page_id)  # drop stale chunks before re-adding
         store.upsert_chunks(chunks)
+        store.mark_superseded(page.page_id, page.version)  # flag prior versions, never delete
         db.upsert_page_version(
             page_id=page.page_id, title=page.title, version=page.version, url=page.url
         )

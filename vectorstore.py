@@ -73,6 +73,7 @@ class HybridStore:
                     "section": c.section,
                     "chunk_index": c.chunk_index,
                     "token_count": c.token_count,
+                    "superseded": False,
                 }
                 for c in chunks
             ],
@@ -80,15 +81,30 @@ class HybridStore:
         self._rebuild_bm25_from_collection()
         self._save_bm25()
 
-    def delete_page(self, page_id: str) -> None:
-        """Remove all chunks for a page before re-adding its current version -
-        keeps stale chunks from a deleted/shrunk page from lingering forever."""
-        self._collection.delete(where={"page_id": page_id})
+    def mark_superseded(self, page_id: str, current_version: int) -> None:
+        """Flag chunks from older versions of this page as superseded, without
+        deleting them - a query_audit_log row citing an old-version chunk id
+        must still resolve to its original content (see parsing.Chunk.id).
+        Superseded chunks are excluded from retrieval but never removed.
+        Idempotent: only touches rows not already flagged."""
+        existing = self._collection.get(
+            where={"$and": [{"page_id": page_id}, {"superseded": False}]},
+            include=["metadatas"],
+        )
+        stale_ids: list[str] = []
+        stale_metas: list[dict] = []
+        for cid, meta in zip(existing["ids"], existing["metadatas"]):
+            if meta.get("version") != current_version:
+                stale_ids.append(cid)
+                stale_metas.append({**meta, "superseded": True})
+        if not stale_ids:
+            return
+        self._collection.update(ids=stale_ids, metadatas=stale_metas)
         self._rebuild_bm25_from_collection()
         self._save_bm25()
 
     def _rebuild_bm25_from_collection(self) -> None:
-        data = self._collection.get(include=["documents"])
+        data = self._collection.get(where={"superseded": False}, include=["documents"])
         self._bm25_chunk_ids = data["ids"]
         self._bm25_corpus_tokens = [_tokenize(doc) for doc in data["documents"]]
         self._bm25 = BM25Okapi(self._bm25_corpus_tokens) if self._bm25_corpus_tokens else None
@@ -124,6 +140,7 @@ class HybridStore:
         res = self._collection.query(
             query_embeddings=[query_vec],
             n_results=min(top_k, self._collection.count()),
+            where={"superseded": False},
             include=["documents", "metadatas"],
         )
         ids = res["ids"][0]

@@ -48,7 +48,7 @@ class Chunk:
 
     @property
     def id(self) -> str:
-        return f"{self.page_id}::{self.chunk_index}"
+        return f"{self.page_id}::{self.version}::{self.chunk_index}"
 
 
 def _table_to_markdown(table: Tag) -> str:
