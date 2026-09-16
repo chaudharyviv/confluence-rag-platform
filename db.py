@@ -9,7 +9,7 @@ import datetime as dt
 import json
 import uuid
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine, inspect, select
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
@@ -35,6 +35,7 @@ class PageVersion(Base):
     version = Column(Integer, nullable=False)
     url = Column(String, nullable=False)
     synced_at = Column(DateTime, default=_now, onupdate=_now)
+    deleted_at = Column(DateTime, nullable=True)  # set once the page is gone from Confluence
 
 
 class QueryAuditLog(Base):
@@ -76,8 +77,21 @@ Session = sessionmaker(bind=_engine, future=True)
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Safe to call on every startup."""
+    """Create tables if they don't exist. Safe to call on every startup.
+
+    Also covers the one column added after the table already shipped
+    (page_versions.deleted_at) - create_all() only creates missing tables,
+    it never alters existing ones, and there's no migration framework here.
+    """
     Base.metadata.create_all(_engine)
+    inspector = inspect(_engine)
+    if "page_versions" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("page_versions")}
+        if "deleted_at" not in cols:
+            col_type = "TIMESTAMP" if _engine.dialect.name != "sqlite" else "DATETIME"
+            with _engine.connect() as conn:
+                conn.exec_driver_sql(f"ALTER TABLE page_versions ADD COLUMN deleted_at {col_type}")
+                conn.commit()
 
 
 def log_query(
@@ -122,6 +136,24 @@ def upsert_page_version(*, page_id: str, title: str, version: int, url: str) -> 
             row = PageVersion(page_id=page_id, title=title, version=version, url=url)
             session.add(row)
         session.commit()
+
+
+def get_all_page_ids() -> list[str]:
+    """Ids of pages we currently consider live (not yet tombstoned) - used by
+    reindex.py to detect pages that vanished from Confluence's page list."""
+    with Session() as session:
+        rows = session.scalars(
+            select(PageVersion.page_id).where(PageVersion.deleted_at.is_(None))
+        )
+        return list(rows)
+
+
+def mark_page_deleted(page_id: str) -> None:
+    with Session() as session:
+        row = session.get(PageVersion, page_id)
+        if row and row.deleted_at is None:
+            row.deleted_at = _now()
+            session.commit()
 
 
 def record_eval_run(

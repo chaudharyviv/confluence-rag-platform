@@ -37,6 +37,15 @@ def run(full: bool = False) -> None:
     changed = 0
     skipped = 0
     total_chunks = 0
+    tombstoned = 0
+
+    live_ids = {page.page_id for page in pages}
+    for page_id in db.get_all_page_ids():
+        if page_id not in live_ids:
+            store.mark_page_superseded(page_id)
+            db.mark_page_deleted(page_id)
+            tombstoned += 1
+            print(f"  tombstoned: page_id={page_id!r} (no longer in Confluence)")
 
     for page in pages:
         if not full:
@@ -61,9 +70,10 @@ def run(full: bool = False) -> None:
         total_chunks += len(chunks)
         print(f"  indexed: {page.title!r} (v{page.version}, {len(chunks)} chunks)")
 
-    print(f"Done. {changed} pages (re)indexed, {skipped} unchanged, {total_chunks} chunks written.")
+    print(f"Done. {changed} pages (re)indexed, {skipped} unchanged, {tombstoned} tombstoned, "
+          f"{total_chunks} chunks written.")
 
-    if settings.storage_mode == "git" and changed > 0:
+    if settings.storage_mode == "git" and (changed > 0 or tombstoned > 0):
         _commit_index()
 
 

@@ -103,6 +103,23 @@ class HybridStore:
         self._rebuild_bm25_from_collection()
         self._save_bm25()
 
+    def mark_page_superseded(self, page_id: str) -> None:
+        """Flag every remaining chunk of a page as superseded - used when the
+        page itself has been deleted upstream in Confluence, so there's no
+        'current version' to keep as in mark_superseded(). Tombstones, never
+        deletes: audit log rows citing this page's chunk ids must still
+        resolve. Idempotent: only touches rows not already flagged."""
+        existing = self._collection.get(
+            where={"$and": [{"page_id": page_id}, {"superseded": False}]},
+            include=["metadatas"],
+        )
+        if not existing["ids"]:
+            return
+        metas = [{**meta, "superseded": True} for meta in existing["metadatas"]]
+        self._collection.update(ids=existing["ids"], metadatas=metas)
+        self._rebuild_bm25_from_collection()
+        self._save_bm25()
+
     def _rebuild_bm25_from_collection(self) -> None:
         data = self._collection.get(where={"superseded": False}, include=["documents"])
         self._bm25_chunk_ids = data["ids"]
