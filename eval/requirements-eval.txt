@@ -1,2 +1,8 @@
 ragas
 datasets
+# ragas doesn't pin this, so pip happily installs langchain-community>=0.4,
+# which dropped the langchain_community.chat_models.vertexai submodule that
+# ragas's own ragas/llms/base.py unconditionally imports at module load -
+# breaking `import ragas` entirely (unrelated to whether you use Vertex).
+# Pin below 0.4 until ragas ships a release that no longer imports it.
+langchain-community<0.4

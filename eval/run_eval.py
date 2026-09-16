@@ -107,8 +107,10 @@ def run(
     (the __main__ block) turns that into a process exit code."""
     try:
         from ragas import evaluate
+        from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
         from datasets import Dataset
+        from langchain_openai import OpenAIEmbeddings
     except ImportError:
         print(
             "ragas isn't installed. Run: pip install --break-system-packages -r "
@@ -116,6 +118,18 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # ragas' evaluate() defaults to its own new-style embeddings wrapper when
+    # none is passed, but the legacy answer_relevancy metric (still the
+    # public ragas.metrics import path) calls the old sync embed_query/
+    # embed_documents interface that wrapper doesn't implement, raising
+    # AttributeError mid-run and silently scoring answer_relevancy as nan.
+    # Passing an explicit LangchainEmbeddingsWrapper sidesteps that mismatch.
+    from config import settings as app_settings
+
+    ragas_embeddings = LangchainEmbeddingsWrapper(
+        OpenAIEmbeddings(model=app_settings.embedding_model, api_key=app_settings.openai_api_key)
+    )
 
     db.init_db()
     golden = load_golden_set(golden_set_path)
@@ -182,6 +196,7 @@ def run(
         result = evaluate(
             dataset,
             metrics=[context_precision, context_recall, faithfulness, answer_relevancy],
+            embeddings=ragas_embeddings,
         )
         df = result.to_pandas()
         for i, row in enumerate(ragas_rows):
