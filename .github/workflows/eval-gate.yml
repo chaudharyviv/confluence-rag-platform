@@ -31,7 +31,7 @@ jobs:
           DOMAIN_DESCRIPTION: ${{ secrets.DOMAIN_DESCRIPTION }}
           # Thresholds for the release gate in eval/run_eval.py - tune these
           # against your own eval set's baseline, not blindly.
-          MIN_FAITHFULNESS: "0.7"
+          MIN_FAITHFULNESS: "0.99"  # TEMP: forcing a failure to verify the gate in CI
           MIN_CONTEXT_RECALL: "0.7"
           REQUIRE_EXACT_LOOKUP_PASS: "true"
           REQUIRE_ROUTER_MATCH: "true"
