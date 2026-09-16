@@ -24,6 +24,8 @@ def _get_model() -> CrossEncoder:
 
 
 def rerank(query: str, candidates: list[RetrievedChunk], top_k: int = 5) -> list[RetrievedChunk]:
+    # top_k here is just this function's fallback; callers pass
+    # settings.rerank_top_k explicitly (see graph.py's rerank_node).
     if not candidates:
         return []
     model = _get_model()
