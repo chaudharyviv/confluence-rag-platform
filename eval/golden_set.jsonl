@@ -1,4 +1,4 @@
-{"question": "What is the context window of GPT-5?", "expected_answer": "GPT-5 has a 400k token context window."}
-{"question": "Who released Claude Opus 4.8?", "expected_answer": "Claude Opus 4.8 was released by Anthropic."}
-{"question": "What model was released today?", "expected_answer": "This requires current information beyond the knowledge base and should route to external search."}
-{"question": "What is the capital of France?", "expected_answer": "This is out of the knowledge base's domain and should be refused or redirected."}
+{"question": "What is the context window of GPT-5.6?", "expected_answer": "GPT-5.6 has a 1,050,000 token (~1.05M) context window.", "required_sources": ["393218::2::1"], "category": "exact_lookup", "answerable": true}
+{"question": "Who released Claude Opus 5?", "expected_answer": "Claude Opus 5 was released by Anthropic, on July 24, 2026.", "required_sources": ["1277953::4::0"], "category": "exact_lookup", "answerable": true}
+{"question": "What model was released today?", "expected_answer": "This requires current information beyond the knowledge base and should route to external search.", "required_sources": [], "category": "needs_external", "answerable": false}
+{"question": "What is the capital of France?", "expected_answer": "This is out of the knowledge base's domain and should be refused or redirected.", "required_sources": [], "category": "out_of_domain", "answerable": false}

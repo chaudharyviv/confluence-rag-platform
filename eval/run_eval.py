@@ -50,6 +50,7 @@ def run(golden_set_path: str, git_sha: str | None = None) -> None:
     print(f"Loaded {len(golden)} golden QA pairs from {golden_set_path}")
 
     questions, ground_truths, answers, contexts = [], [], [], []
+    categories, required_sources_list, answerable_list = [], [], []
 
     for item in golden:
         result = ask(item["question"])
@@ -57,6 +58,9 @@ def run(golden_set_path: str, git_sha: str | None = None) -> None:
         ground_truths.append(item["expected_answer"])
         answers.append(result["answer"])
         contexts.append([c.content for c in result.get("reranked", [])] or [""])
+        categories.append(item.get("category", "uncategorized"))
+        required_sources_list.append(item.get("required_sources", []))
+        answerable_list.append(item.get("answerable"))
         print(f"  ran: {item['question'][:60]!r} -> router={result['router_decision']}")
 
     dataset = Dataset.from_dict(
@@ -72,10 +76,23 @@ def run(golden_set_path: str, git_sha: str | None = None) -> None:
         dataset,
         metrics=[context_precision, context_recall, faithfulness, answer_relevancy],
     )
-    scores = result.to_pandas().mean(numeric_only=True).to_dict()
-    print("\nEval results:")
+    df = result.to_pandas()
+    df["category"] = categories
+    df["required_sources"] = required_sources_list
+    df["answerable"] = answerable_list
+
+    metric_cols = [c for c in ("context_precision", "context_recall", "faithfulness", "answer_relevancy") if c in df]
+    scores = df[metric_cols].mean(numeric_only=True).to_dict()
+    print("\nEval results (aggregate):")
     for k, v in scores.items():
         print(f"  {k}: {v:.3f}")
+
+    print("\nEval results by category:")
+    for category, group in df.groupby("category"):
+        print(f"  {category} (n={len(group)}):")
+        means = group[metric_cols].mean(numeric_only=True)
+        for k, v in means.items():
+            print(f"    {k}: {v:.3f}")
 
     db.record_eval_run(
         num_questions=len(golden),
@@ -83,7 +100,7 @@ def run(golden_set_path: str, git_sha: str | None = None) -> None:
         context_recall=scores.get("context_recall", 0.0),
         faithfulness=scores.get("faithfulness", 0.0),
         answer_relevancy=scores.get("answer_relevancy", 0.0),
-        raw_results=result.to_pandas().to_dict(orient="records"),
+        raw_results=df.to_dict(orient="records"),
         git_sha=git_sha,
     )
     print("\nSaved to eval_runs table.")
