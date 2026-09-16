@@ -23,8 +23,18 @@ Not every row is scored the same way:
   - Any row with `required_sources` gets a deterministic context-recall
     check: did retrieval actually surface those chunk ids, independent of
     Ragas' own (LLM-judged) context_recall metric.
+
+Release gate: this script exits nonzero if any of the below fail, so CI can
+block a merge on a real regression instead of just recording a number that
+nobody looks at until later. Thresholds/requirements come from env vars
+(with CLI overrides for local tuning) - see --help.
+  MIN_FAITHFULNESS, MIN_CONTEXT_RECALL   - aggregate Ragas score floors
+  REQUIRE_EXACT_LOOKUP_PASS               - all exact_lookup rows must pass
+  REQUIRE_ROUTER_MATCH                    - all router-decision checks must pass
+  REQUIRE_SOURCE_COVERAGE                 - all source-coverage checks must pass
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -37,6 +47,17 @@ from graph import ask
 # Categories Ragas can't meaningfully score: there's no answerable ground
 # truth to compare against, only a routing decision to check.
 NOT_RAGAS_SCORABLE = {"out_of_domain", "needs_external"}
+
+
+def _env_float(name: str, default: float) -> float:
+    return float(os.environ.get(name) or default)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() not in ("0", "false", "no", "")
 
 
 def load_golden_set(path: str) -> list[dict]:
@@ -72,7 +93,18 @@ def check_source_coverage(retrieved_ids: list[str], required_sources: list[str])
     return set(required_sources).issubset(set(retrieved_ids))
 
 
-def run(golden_set_path: str, git_sha: str | None = None) -> None:
+def run(
+    golden_set_path: str,
+    git_sha: str | None = None,
+    *,
+    min_faithfulness: float = 0.0,
+    min_context_recall: float = 0.0,
+    require_exact_lookup_pass: bool = True,
+    require_router_match: bool = True,
+    require_source_coverage: bool = True,
+) -> bool:
+    """Returns True if the release gate passes, False otherwise. The caller
+    (the __main__ block) turns that into a process exit code."""
     try:
         from ragas import evaluate
         from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
@@ -199,6 +231,38 @@ def run(golden_set_path: str, git_sha: str | None = None) -> None:
     )
     print("\nSaved to eval_runs table.")
 
+    # ---------- release gate ----------
+
+    gate_failures: list[str] = []
+
+    if ragas_rows:
+        faithfulness_score = scores.get("faithfulness", 0.0)
+        if faithfulness_score < min_faithfulness:
+            gate_failures.append(
+                f"faithfulness {faithfulness_score:.3f} < MIN_FAITHFULNESS {min_faithfulness:.3f}"
+            )
+        context_recall_score = scores.get("context_recall", 0.0)
+        if context_recall_score < min_context_recall:
+            gate_failures.append(
+                f"context_recall {context_recall_score:.3f} < MIN_CONTEXT_RECALL {min_context_recall:.3f}"
+            )
+
+    if require_exact_lookup_pass and any(not ok for _, ok in exact_lookup_results):
+        gate_failures.append("one or more exact_lookup rows failed (REQUIRE_EXACT_LOOKUP_PASS)")
+    if require_router_match and any(not ok for _, ok in router_match_results):
+        gate_failures.append("one or more router-decision checks failed (REQUIRE_ROUTER_MATCH)")
+    if require_source_coverage and any(not ok for _, ok in source_coverage_results):
+        gate_failures.append("one or more source-coverage checks failed (REQUIRE_SOURCE_COVERAGE)")
+
+    if gate_failures:
+        print("\nRelease gate: FAILED")
+        for failure in gate_failures:
+            print(f"  - {failure}")
+        return False
+
+    print("\nRelease gate: PASSED")
+    return True
+
 
 if __name__ == "__main__":
     import argparse
@@ -206,5 +270,37 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("golden_set", help="Path to a .jsonl golden QA set")
     parser.add_argument("--git-sha", default=None)
+    parser.add_argument(
+        "--min-faithfulness", type=float, default=_env_float("MIN_FAITHFULNESS", 0.0),
+        help="Minimum aggregate Ragas faithfulness score to pass the gate (env: MIN_FAITHFULNESS)",
+    )
+    parser.add_argument(
+        "--min-context-recall", type=float, default=_env_float("MIN_CONTEXT_RECALL", 0.0),
+        help="Minimum aggregate Ragas context_recall score to pass the gate (env: MIN_CONTEXT_RECALL)",
+    )
+    parser.add_argument(
+        "--require-exact-lookup-pass", type=lambda s: s.lower() != "false",
+        default=_env_bool("REQUIRE_EXACT_LOOKUP_PASS", True),
+        help="Fail the gate if any exact_lookup row fails (env: REQUIRE_EXACT_LOOKUP_PASS)",
+    )
+    parser.add_argument(
+        "--require-router-match", type=lambda s: s.lower() != "false",
+        default=_env_bool("REQUIRE_ROUTER_MATCH", True),
+        help="Fail the gate if any router-decision check fails (env: REQUIRE_ROUTER_MATCH)",
+    )
+    parser.add_argument(
+        "--require-source-coverage", type=lambda s: s.lower() != "false",
+        default=_env_bool("REQUIRE_SOURCE_COVERAGE", True),
+        help="Fail the gate if any source-coverage check fails (env: REQUIRE_SOURCE_COVERAGE)",
+    )
     args = parser.parse_args()
-    run(args.golden_set, git_sha=args.git_sha)
+    passed = run(
+        args.golden_set,
+        git_sha=args.git_sha,
+        min_faithfulness=args.min_faithfulness,
+        min_context_recall=args.min_context_recall,
+        require_exact_lookup_pass=args.require_exact_lookup_pass,
+        require_router_match=args.require_router_match,
+        require_source_coverage=args.require_source_coverage,
+    )
+    sys.exit(0 if passed else 1)

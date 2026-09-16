@@ -1,0 +1,39 @@
+# Release gate: blocks a PR from merging if it regresses retrieval/generation
+# quality. Deliberately separate from reindex.yml - that workflow rebuilds
+# and pushes the index on a schedule; this one only reads the index already
+# committed to the repo and never writes anything back, so it needs neither
+# git-push permissions nor Confluence credentials.
+name: Eval gate
+
+on:
+  pull_request:
+    paths:
+      - "parsing.py"
+      - "vectorstore.py"
+      - "llm.py"
+      - "graph.py"
+      - "reranker.py"
+  workflow_dispatch: {}
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r eval/requirements-eval.txt
+      - name: Run eval release gate
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOMAIN_DESCRIPTION: ${{ secrets.DOMAIN_DESCRIPTION }}
+          # Thresholds for the release gate in eval/run_eval.py - tune these
+          # against your own eval set's baseline, not blindly.
+          MIN_FAITHFULNESS: "0.7"
+          MIN_CONTEXT_RECALL: "0.7"
+          REQUIRE_EXACT_LOOKUP_PASS: "true"
+          REQUIRE_ROUTER_MATCH: "true"
+          REQUIRE_SOURCE_COVERAGE: "true"
+        run: python eval/run_eval.py eval/golden_set.jsonl --git-sha "${{ github.event.pull_request.head.sha || github.sha }}"
