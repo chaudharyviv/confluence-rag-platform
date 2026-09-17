@@ -75,6 +75,91 @@ def render_meta(source_type: str, groundedness_verdict: str | None) -> None:
             st.badge(label, icon=icon, color=color)
 
 
+def _chunk_meta(c) -> dict:
+    meta = getattr(c, "metadata", None) or (c if isinstance(c, dict) else {})
+    return meta if isinstance(meta, dict) else {}
+
+
+def render_pipeline(
+    candidates: list,
+    reranked: list,
+    router_decision: str | None,
+    router_confidence: float | None,
+) -> None:
+    """Show the retrieval -> fusion -> rerank -> routing stages that produced
+    this answer - the mechanics behind the badges, for training/demo use."""
+    with st.expander("How this answer was built", icon=":material/route:", expanded=False):
+        st.markdown(
+            f"**1. Hybrid retrieval** — {len(candidates)} candidates pulled from "
+            f"Chroma (dense) + BM25 (sparse), fused with Reciprocal Rank Fusion "
+            f"(k={settings.rrf_k})."
+        )
+        if candidates:
+            top_candidates = sorted(candidates, key=lambda c: c.rrf_score, reverse=True)[:10]
+            st.dataframe(
+                [
+                    {
+                        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
+                        "dense_rank": c.dense_rank,
+                        "sparse_rank": c.sparse_rank,
+                        "rrf_score": round(c.rrf_score, 4),
+                    }
+                    for c in top_candidates
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.caption("No candidates retrieved.")
+
+        st.markdown(
+            f"**2. Cross-encoder rerank** — top {settings.rerank_top_k} fused candidates "
+            f"rescored; relevance threshold = {settings.rerank_relevance_threshold}."
+        )
+        if reranked:
+            st.dataframe(
+                [
+                    {
+                        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
+                        "section": _chunk_meta(c).get("section", "—"),
+                        "tokens": _chunk_meta(c).get("token_count", "—"),
+                        "rerank_score": round(c.rerank_score, 4) if c.rerank_score is not None else None,
+                        "passes_threshold": (
+                            c.rerank_score > settings.rerank_relevance_threshold
+                            if c.rerank_score is not None
+                            else None
+                        ),
+                    }
+                    for c in reranked
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+            with st.popover("Preview chunk text"):
+                for i, c in enumerate(reranked):
+                    label = _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", f"Chunk {i}")
+                    st.caption(label)
+                    st.text(c.content[:500] + ("…" if len(c.content) > 500 else ""))
+        else:
+            st.caption("No chunks survived reranking.")
+
+        st.markdown("**3. Routing**")
+        top_score = reranked[0].rerank_score if reranked and reranked[0].rerank_score is not None else None
+        if router_decision in (None, "retrieval_confirmed") and top_score is not None:
+            st.caption(
+                f"Top rerank score ({top_score:.3f}) cleared the "
+                f"{settings.rerank_relevance_threshold} threshold — answered directly "
+                "from retrieval, no LLM router call needed."
+            )
+        else:
+            conf = f"{router_confidence:.2f}" if router_confidence is not None else "n/a"
+            st.caption(
+                f"Retrieval was weak/empty, so the Claude router "
+                f"(`{settings.claude_router_model}`) was consulted — "
+                f"decision: `{router_decision}` (confidence {conf})."
+            )
+
+
 def render_sources(reranked: list) -> None:
     """Render expandable list of sources used for the answer."""
     count = len(reranked) if reranked else 0
@@ -126,6 +211,39 @@ with st.sidebar:
             f"`{settings.database_url.split('://')[0]}`"
         )
 
+    with st.expander("Eval history (Ragas)", expanded=False):
+        runs = db.get_recent_eval_runs(limit=20)
+        if not runs:
+            st.caption("No eval runs recorded yet — run `python eval/run_eval.py eval/golden_set.jsonl`.")
+        else:
+            runs = list(reversed(runs))  # chronological for the chart
+            st.line_chart(
+                {
+                    "run_ts": [r.run_ts for r in runs],
+                    "faithfulness": [r.faithfulness for r in runs],
+                    "context_recall": [r.context_recall for r in runs],
+                    "context_precision": [r.context_precision for r in runs],
+                    "answer_relevancy": [r.answer_relevancy for r in runs],
+                },
+                x="run_ts",
+            )
+            st.dataframe(
+                [
+                    {
+                        "run_ts": r.run_ts,
+                        "git_sha": (r.git_sha or "—")[:8],
+                        "n": r.num_questions,
+                        "faithfulness": r.faithfulness,
+                        "context_recall": r.context_recall,
+                        "context_precision": r.context_precision,
+                        "answer_relevancy": r.answer_relevancy,
+                    }
+                    for r in reversed(runs)  # newest first in the table
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+
     st.divider()
     if st.button(
         "Clear conversation",
@@ -149,6 +267,12 @@ for turn in st.session_state.history:
         if turn.get("meta"):
             render_meta(*turn["meta"])
         if "sources" in turn:
+            render_pipeline(
+                turn.get("candidates", []),
+                turn["sources"],
+                turn.get("router_decision"),
+                turn.get("router_confidence"),
+            )
             render_sources(turn["sources"])
 
 # Support clicking an example question. st.chat_input must be called on every
@@ -169,6 +293,12 @@ if question:
             st.markdown(result["answer"])
             render_meta(result["source_type"], result.get("groundedness_verdict"))
             reranked = result.get("reranked") or []
+            render_pipeline(
+                result.get("candidates") or [],
+                reranked,
+                result.get("router_decision"),
+                result.get("router_confidence"),
+            )
             render_sources(reranked)
 
             st.session_state.history.append(
@@ -177,6 +307,9 @@ if question:
                     "content": result["answer"],
                     "meta": (result["source_type"], result.get("groundedness_verdict")),
                     "sources": reranked,
+                    "candidates": result.get("candidates") or [],
+                    "router_decision": result.get("router_decision"),
+                    "router_confidence": result.get("router_confidence"),
                 }
             )
         except Exception as exc:

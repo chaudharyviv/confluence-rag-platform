@@ -156,6 +156,16 @@ def mark_page_deleted(page_id: str) -> None:
             session.commit()
 
 
+def get_recent_eval_runs(limit: int = 20) -> list[EvalRun]:
+    """Most recent eval harness runs, newest first - powers the eval-history
+    view in the Streamlit sidebar."""
+    with Session() as session:
+        rows = session.scalars(
+            select(EvalRun).order_by(EvalRun.run_ts.desc()).limit(limit)
+        )
+        return list(rows)
+
+
 def record_eval_run(
     *,
     num_questions: int,
