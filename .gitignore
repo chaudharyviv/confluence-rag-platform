@@ -13,3 +13,4 @@ venv/
 .venv/
 tasks.md
 CLAUDE.md
+*.md
