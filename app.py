@@ -107,7 +107,7 @@ def render_pipeline(
                     for c in top_candidates
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.caption("No candidates retrieved.")
@@ -133,7 +133,7 @@ def render_pipeline(
                     for c in reranked
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
             with st.popover("Preview chunk text"):
                 for i, c in enumerate(reranked):
@@ -188,7 +188,7 @@ def render_empty_state() -> None:
     cols = st.columns(len(EXAMPLE_QUESTIONS))
     for i, q in enumerate(EXAMPLE_QUESTIONS):
         with cols[i]:
-            if st.button(q, use_container_width=True, key=f"example_{i}"):
+            if st.button(q, width="stretch", key=f"example_{i}"):
                 st.session_state._pending_question = q
                 st.rerun()
 
@@ -241,14 +241,14 @@ with st.sidebar:
                     for r in reversed(runs)  # newest first in the table
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
     st.divider()
     if st.button(
         "Clear conversation",
         icon=":material/delete:",
-        use_container_width=True,
+        width="stretch",
         type="secondary",
     ):
         st.session_state.history = []
