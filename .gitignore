@@ -11,3 +11,4 @@ chroma_db/
 bm25_index.pkl
 venv/
 .venv/
+tasks.md
