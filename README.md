@@ -119,7 +119,9 @@ stateDiagram-v2
 | [`reindex.py`](reindex.py) | Offline ingestion job: incremental (`version` diff) or `--full`; commits index artifacts back to git when `STORAGE_MODE=git`. |
 | [`eval/run_eval.py`](eval/run_eval.py) | Ragas eval harness - runs the golden set through the live graph, scores it, records it to `eval_runs`. |
 | [`eval/golden_set.jsonl`](eval/golden_set.jsonl) | Hand-authored QA pairs, including out-of-date and out-of-domain edge cases. |
+| [`tests/`](tests/) | `pytest` unit tests for chunking (`parsing.py`) and RRF fusion (`vectorstore.py`) - no API calls, runs on every PR. |
 | [`.github/workflows/reindex.yml`](.github/workflows/reindex.yml) | Scheduled (nightly) reindex for `STORAGE_MODE=git` hosts. |
+| [`.github/workflows/tests.yml`](.github/workflows/tests.yml) | Runs `pytest tests/` on every PR - fast, no secrets required. |
 | [`production-rag-architecture.md`](production-rag-architecture.md) | The full pre-code design doc and rationale. |
 
 ## Installation
@@ -156,7 +158,7 @@ Every setting is read once, in [`config.py`](config.py), from `os.environ` - pop
 | `OPENAI_API_KEY` | - (required) | Used only for embeddings. |
 | `ANTHROPIC_API_KEY` | - (required) | Used for routing, generation, groundedness. |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | 1536-dim. |
-| `CLAUDE_MODEL` | `claude-sonnet-5` | Generation + external fallback (see `claude_model` default in [`config.py`](config.py); `.env.example` currently pins `claude-sonnet-4-6` explicitly, which overrides this default whenever `.env` is loaded). |
+| `CLAUDE_MODEL` | `claude-sonnet-5` | Generation + external fallback. |
 | `CLAUDE_ROUTER_MODEL` | `claude-haiku-4-5-20251001` | Router + groundedness (classification-tier, not generation-tier). |
 | `CONFLUENCE_BASE_URL` / `CONFLUENCE_EMAIL` / `CONFLUENCE_API_TOKEN` / `CONFLUENCE_SPACE_KEY` | - | Only needed to run `reindex.py`; the deployed app doesn't require Confluence credentials to serve queries. |
 | `DOMAIN_DESCRIPTION` | `a curated knowledge base` | Feeds the router's classification prompt - change this, not code, to repoint the whole system at a different topic. |
@@ -217,7 +219,7 @@ python eval/run_eval.py eval/golden_set.jsonl \
   --require-exact-lookup-pass --require-router-match --require-source-coverage
 ```
 
-Kept in a separate requirements file so the deployed Streamlit app doesn't carry Ragas/LangChain's weight - eval only needs to run locally or in CI. CI runs this as the release gate ([`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml)), triggered on PRs touching `parsing.py`, `vectorstore.py`, `llm.py`, `graph.py`, or `reranker.py`. There's no `pytest` suite - this harness is the correctness check for retrieval/generation changes.
+Kept in a separate requirements file so the deployed Streamlit app doesn't carry Ragas/LangChain's weight - eval only needs to run locally or in CI. CI runs this as the release gate ([`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml)), triggered on PRs touching `parsing.py`, `vectorstore.py`, `llm.py`, `graph.py`, or `reranker.py`. This is the correctness check for end-to-end retrieval/generation behavior; see [Unit tests](#unit-tests) below for the narrower, faster checks on pure chunking/fusion logic.
 
 Each golden-set row is labeled with a `category`, and `run_eval.py` scores each category differently rather than forcing everything through the same LLM judge:
 
@@ -231,6 +233,20 @@ The gate flags above (`--min-faithfulness`, `--min-context-recall`, `--require-e
 
 Write your own golden set as you author Confluence pages - a couple of QA pairs per page, with real ground truth, is a much better eval-authoring workflow than reverse-engineering questions from someone else's docs. [`eval/golden_set.jsonl`](eval/golden_set.jsonl) includes two edge-case rows (an out-of-date question, an out-of-domain question) meant to exercise the router-decision check rather than Ragas scoring. Results are written to the `eval_runs` table so quality is tracked as a trend, not just a pass/fail on the latest commit - the same history the Streamlit sidebar charts under **Eval history**.
 
+## Unit tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/
+```
+
+The eval harness above checks end-to-end retrieval/generation behavior against real API calls, which is the right tool for "did this change the answer quality" but a poor one for "is the chunking/fusion logic itself still correct" - a broken table split or an off-by-one in the RRF rank sum might not shift any golden-set answer, so it can slip through unnoticed. `tests/` covers that gap directly, with no API calls or network access:
+
+- [`tests/test_parsing.py`](tests/test_parsing.py) - `parsing.chunk_page`'s invariants: tables and code fences are never split mid-block, sections respect heading boundaries, breadcrumbs nest correctly, and the token-aware sliding window stays under its cap with real overlap.
+- [`tests/test_vectorstore_fusion.py`](tests/test_vectorstore_fusion.py) - `HybridStore._fuse`'s RRF math: the score formula itself, that a chunk appearing in both lists is rewarded, and that within a single list the original ranking is preserved.
+
+`tests/conftest.py` sets dummy `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` values (only if unset) so importing `config.py` - and anything that imports it, like `vectorstore.py` - doesn't require real credentials just to exercise pure logic. Runs on every PR via [`.github/workflows/tests.yml`](.github/workflows/tests.yml), separately from the eval gate (no secrets needed, so it runs on any PR, not just ones touching the gated files).
+
 ## What's deliberately not built yet
 
 - Real graph extraction/traversal (entities, relations, community summarization) - deferred as a future retrieval mode once hybrid + rerank + eval is solid and measured.
@@ -238,6 +254,7 @@ Write your own golden set as you author Confluence pages - a couple of QA pairs 
 - A fine-tuned reranker - revisit only if eval numbers say retrieval precision is the bottleneck.
 - Live/real-time indexing - nightly-refresh-via-Git is the free-tier trade-off; a real problem with that cadence is the trigger to move to an always-on host, not before.
 - A wired-up `SERPAPI_API_KEY` search call for the external-fallback path - `needs_external` questions currently get Claude's general knowledge, explicitly labeled unverified in the UI and audit log.
+- Incremental BM25 updates - `rank_bm25`'s `BM25Okapi` has no incremental-update API, so `vectorstore.py` re-tokenizes and re-pickles the *entire* live corpus on every upsert/supersede call (see `HybridStore._rebuild_bm25_from_collection`). O(n) in total chunk count, not just the changed rows. Fine at current scale (a few thousand chunks, nightly/manual reindex); revisit if reindex time or memory becomes a real problem.
 
 See [`production-rag-architecture.md`](production-rag-architecture.md) for the fuller rationale and what would trigger building each of these.
 
@@ -248,7 +265,7 @@ We welcome contributions! Please fork the repository and submit a pull request.
 1. **Set up** - run the installation steps above.
 2. **Create a branch** - `git checkout -b my-feature`.
 3. **Make changes** - ensure code follows existing style and passes tests.
-4. **Run tests** - `pytest` (if tests are added).
+4. **Run tests** - `pytest tests/` for chunking/fusion logic; `python eval/run_eval.py eval/golden_set.jsonl` for retrieval/generation changes (see [Unit tests](#unit-tests) and [Evaluation](#evaluation)).
 5. **Submit PR** - describe the changes and reference any related issues.
 
 For major changes, open an issue first to discuss the proposed design.

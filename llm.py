@@ -20,6 +20,21 @@ from vectorstore import RetrievedChunk
 _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
+def _extract_tool_input(resp, tool_name: str) -> dict:
+    """Pull the forced tool's input out of a response. tool_choice pins the
+    model to exactly one tool, so a missing tool_use block means the API
+    returned something unexpected (e.g. a max_tokens cutoff before the tool
+    call, or a stop_reason we didn't anticipate) - fail with a clear error
+    instead of an unhandled StopIteration from a bare next()."""
+    for block in resp.content:
+        if block.type == "tool_use" and block.name == tool_name:
+            return block.input
+    raise RuntimeError(
+        f"Expected a '{tool_name}' tool_use block (stop_reason={resp.stop_reason!r}) "
+        f"but got: {[b.type for b in resp.content]!r}"
+    )
+
+
 # ---------------------------------------------------------------- routing ---
 
 _ROUTER_TOOL = {
@@ -81,8 +96,7 @@ def classify_domain(question: str) -> RouterDecision:
             }
         ],
     )
-    tool_use = next(b for b in resp.content if b.type == "tool_use")
-    data = tool_use.input
+    data = _extract_tool_input(resp, "classify_question")
     return RouterDecision(
         in_domain=bool(data["in_domain"]),
         confidence=float(data["confidence"]),
@@ -187,8 +201,7 @@ def check_groundedness(answer: str, chunks: list[RetrievedChunk]) -> Groundednes
             }
         ],
     )
-    tool_use = next(b for b in resp.content if b.type == "tool_use")
-    data = tool_use.input
+    data = _extract_tool_input(resp, "verify_groundedness")
     return GroundednessResult(
         verdict=data["verdict"],
         unsupported_claims=data.get("unsupported_claims", []),

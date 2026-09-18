@@ -1,0 +1,22 @@
+# Fast unit tests for pure logic (chunking boundaries, RRF fusion math) that
+# an eval run wouldn't reliably catch - it only notices a regression if it
+# happens to change an answer in the golden set. No API secrets needed:
+# tests/conftest.py sets dummy credentials just so importing config.py (and
+# vectorstore.py, which imports it) doesn't require real keys.
+name: Unit tests
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests/ -v

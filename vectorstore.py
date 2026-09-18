@@ -121,6 +121,14 @@ class HybridStore:
         self._save_bm25()
 
     def _rebuild_bm25_from_collection(self) -> None:
+        """Re-tokenizes and re-pickles the WHOLE live corpus - O(n) in total
+        chunk count, on every upsert/supersede call, not just the changed
+        rows. rank_bm25's BM25Okapi has no incremental-update API, so a
+        partial rebuild would mean hand-maintaining term/doc-frequency
+        tables ourselves. Fine at this project's scale (a few thousand
+        chunks, nightly/manual reindex - see reindex.py); revisit only if
+        reindex time or memory from this rebuild actually becomes a problem,
+        e.g. by batching upserts through one rebuild instead of one per page."""
         data = self._collection.get(where={"superseded": False}, include=["documents"])
         self._bm25_chunk_ids = data["ids"]
         self._bm25_corpus_tokens = [_tokenize(doc) for doc in data["documents"]]
