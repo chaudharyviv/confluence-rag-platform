@@ -11,18 +11,12 @@ import logging
 import os
 from pathlib import Path
 
-# Streamlit's file watcher probes every transformers submodule for hot-reload
-# purposes and logs a warning (with traceback) when optional deps like
-# torchvision are missing. Harmless, but noisy - silence just this logger.
+# Silence noisy transformers module watcher warnings
 logging.getLogger("streamlit.watcher.local_sources_watcher").setLevel(logging.ERROR)
 
 import streamlit as st
 
-# st.secrets is Streamlit Community Cloud's mechanism for env vars, but it
-# does NOT populate os.environ automatically - config.py (and everything
-# that imports it) only reads os.environ, so bridge it here, before any of
-# the imports below happen. On a laptop or CI, st.secrets is just empty and
-# this loop does nothing; .env / real env vars take over as normal.
+# Bridge st.secrets to os.environ for deployment platforms
 try:
     for key, value in st.secrets.items():
         os.environ.setdefault(key, str(value))
@@ -65,15 +59,9 @@ EXAMPLE_QUESTIONS = [
     "How does Claude Sonnet 5 compare to GPT-5.6 on cost and benchmarks?",
 ]
 
-
 @st.cache_data
 def load_golden_lookup() -> dict[str, dict]:
-    """Golden QA set, keyed by exact question text. Rows with
-    `required_sources` give us labeled ground truth for a live
-    precision@k / recall@k demo - no Ragas / LLM judge needed for that,
-    just set overlap against what retrieval actually returned. Missing
-    file is fine (e.g. a deploy without the eval extras) - demo panel
-    just won't have ground truth to compare against."""
+    """Golden QA set, keyed by exact question text."""
     path = Path(__file__).parent / settings.golden_set_path
     if not path.exists():
         return {}
@@ -87,14 +75,8 @@ def load_golden_lookup() -> dict[str, dict]:
             lookup[row["question"]] = row
     return lookup
 
-
 def _precision_recall(retrieved_ids: list[str], required_sources: list[str]) -> tuple[float, float]:
-    """precision@k = of what we retrieved, how much was actually relevant.
-    recall@k = of what's actually relevant, how much did we retrieve.
-    Both are plain set overlap against the golden set's labeled
-    required_sources - the same ground truth eval/run_eval.py uses for its
-    deterministic source-coverage check, just reported as a fraction here
-    instead of a pass/fail."""
+    """Precision@k and Recall@k calculation against ground truth sources."""
     if not retrieved_ids:
         return 0.0, 0.0
     required = set(required_sources)
@@ -105,21 +87,12 @@ def _precision_recall(retrieved_ids: list[str], required_sources: list[str]) -> 
 
 
 def ragas_available() -> bool:
-    """Cheap check (no import) so the demo button can be disabled/explained
-    instead of crashing the whole Streamlit process - ragas is deliberately
-    excluded from the app's own requirements.txt (see eval/requirements-eval.txt
-    and CLAUDE.md) so the deployed app doesn't carry that weight, which means
-    it may genuinely be absent here."""
+    """Check availability of Ragas evaluation package."""
     return importlib.util.find_spec("ragas") is not None
 
 
 def run_eval_live(golden_set_path: str) -> tuple[bool, str]:
-    """Run the same eval/run_eval.py release gate used in CI, in-process, so
-    a training audience can watch it run against the live index instead of
-    just looking at historical numbers. Captures stdout so the same log CI
-    would produce shows up in the UI. Only called after ragas_available()
-    is confirmed - run_eval.run() itself calls sys.exit(1) on a missing
-    ragas import, which would take the whole Streamlit server down."""
+    """Run in-process eval gate script capturing stdout."""
     import eval.run_eval as run_eval_module
 
     buf = io.StringIO()
@@ -127,18 +100,12 @@ def run_eval_live(golden_set_path: str) -> tuple[bool, str]:
         with contextlib.redirect_stdout(buf):
             passed = run_eval_module.run(golden_set_path)
     except SystemExit:
-        # run_eval.run() itself calls sys.exit(1) if `import ragas` raises
-        # (e.g. an installed-but-incompatible ragas/langchain-community pin -
-        # find_spec() above only confirms the package is *present*, not that
-        # importing it actually works). Left uncaught, that SystemExit would
-        # unwind straight out of this Streamlit script run and silently
-        # truncate the rest of the page for this rerun.
         passed = False
     return passed, buf.getvalue()
 
 
 def render_meta(source_type: str, groundedness_verdict: str | None) -> None:
-    """Render source-type and groundedness badges side-by-side."""
+    """Render source-type and groundedness badges inside a structured row."""
     cols = st.columns([1, 1], gap="small")
     with cols[0]:
         label, icon, color = SOURCE_BADGE.get(
@@ -160,9 +127,9 @@ def _chunk_meta(c) -> dict:
 def _candidate_row(c) -> dict:
     return {
         "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
-        "dense_rank": c.dense_rank,
-        "sparse_rank": c.sparse_rank,
-        "rrf_score": round(c.rrf_score, 4),
+        "dense_rank": c.dense_rank if c.dense_rank is not None else 0,
+        "sparse_rank": c.sparse_rank if c.sparse_rank is not None else 0,
+        "rrf_score": round(c.rrf_score, 4) if getattr(c, "rrf_score", None) is not None else 0.0,
     }
 
 
@@ -173,23 +140,19 @@ def render_pipeline(
     router_decision: str | None,
     router_confidence: float | None,
 ) -> None:
-    """Show the retrieval -> fusion -> rerank -> routing stages that produced
-    this answer - the mechanics behind the badges, for training/demo use."""
+    """Show the retrieval -> fusion -> rerank -> routing breakdown."""
     with st.expander("How this answer was built", icon=":material/route:", expanded=False):
         st.markdown("### 1. Retrieval — two independent searches")
         st.caption(
-            "Dense search (Chroma) embeds the query and finds chunks close in "
-            "vector space — good at *meaning* even with no shared words. Sparse "
-            "search (BM25) is classic keyword overlap — good at exact terms, "
-            "IDs, and jargon dense embeddings can blur together. Neither alone "
-            "is reliable, so both run on every query."
+            "Dense search (Chroma) embeds the query for semantic matching. "
+            "Sparse search (BM25) tracks exact keyword overlap. Both run on every query."
         )
 
         dense_only = sorted(
-            (c for c in candidates if c.dense_rank is not None), key=lambda c: c.dense_rank
+            (c for c in candidates if getattr(c, "dense_rank", None) is not None), key=lambda c: c.dense_rank
         )[:10]
         sparse_only = sorted(
-            (c for c in candidates if c.sparse_rank is not None), key=lambda c: c.sparse_rank
+            (c for c in candidates if getattr(c, "sparse_rank", None) is not None), key=lambda c: c.sparse_rank
         )[:10]
 
         col_d, col_s = st.columns(2)
@@ -204,8 +167,9 @@ def render_pipeline(
                         }
                         for c in dense_only
                     ],
+                    column_config={"dense_rank": st.column_config.NumberColumn("Rank", format="%d")},
                     hide_index=True,
-                    width="stretch",
+                    use_container_width=True,
                 )
             else:
                 st.caption("No dense hits.")
@@ -220,42 +184,38 @@ def render_pipeline(
                         }
                         for c in sparse_only
                     ],
+                    column_config={"sparse_rank": st.column_config.NumberColumn("Rank", format="%d")},
                     hide_index=True,
-                    width="stretch",
+                    use_container_width=True,
                 )
             else:
                 st.caption("No sparse hits.")
 
         st.markdown("### 2. Fusion — Reciprocal Rank Fusion")
         st.caption(
-            f"RRF combines the two rankings without needing to compare raw scores "
-            f"(a cosine similarity and a BM25 score aren't on the same scale, so "
-            f"blending them directly would be arbitrary). Each chunk gets "
-            f"`score = Σ 1 / (k + rank)` summed over every list it appears in "
-            f"(k={settings.rrf_k}) — showing up near the top of *either* list, "
-            f"or moderately in *both*, pushes a chunk up the fused ranking. "
-            f"{len(candidates)} unique candidates came out of this step."
+            f"Combines both rankings via `score = Σ 1 / (k + rank)` (k={settings.rrf_k}). "
+            f"{len(candidates)} unique candidates merged."
         )
         if candidates:
-            top_candidates = sorted(candidates, key=lambda c: c.rrf_score, reverse=True)[:10]
+            top_candidates = sorted(candidates, key=lambda c: getattr(c, "rrf_score", 0.0), reverse=True)[:10]
             st.dataframe(
                 [_candidate_row(c) for c in top_candidates],
+                column_config={
+                    "rrf_score": st.column_config.ProgressColumn(
+                        "RRF Score", format="%.4f", min_value=0.0, max_value=0.1
+                    ),
+                    "dense_rank": st.column_config.NumberColumn("Dense Rank", format="%d"),
+                    "sparse_rank": st.column_config.NumberColumn("Sparse Rank", format="%d"),
+                },
                 hide_index=True,
-                width="stretch",
+                use_container_width=True,
             )
         else:
             st.caption("No candidates retrieved.")
 
         st.markdown("### 3. Rerank — cross-encoder rescoring")
         st.caption(
-            "RRF is fast but coarse — it never actually reads the chunk against "
-            "the question together. A cross-encoder does: it scores every "
-            f"(question, chunk) pair jointly — all {len(candidates)} fused "
-            f"candidates get rescored, then only the top {settings.rerank_top_k} "
-            "survive. Slower than RRF (it's a real forward pass per pair, not "
-            "just arithmetic on ranks), but far more precise about *relevance*, "
-            "not just keyword/vector overlap — which is exactly why it can "
-            "reorder a chunk that RRF ranked poorly up into the final answer."
+            f"Jointly rescores (question, chunk) pairs. Top {settings.rerank_top_k} candidates survive."
         )
         if reranked:
             st.dataframe(
@@ -263,18 +223,25 @@ def render_pipeline(
                     {
                         "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
                         "section": _chunk_meta(c).get("section", "—"),
-                        "tokens": _chunk_meta(c).get("token_count", "—"),
-                        "rerank_score": round(c.rerank_score, 4) if c.rerank_score is not None else None,
+                        "tokens": _chunk_meta(c).get("token_count", 0),
+                        "rerank_score": c.rerank_score if getattr(c, "rerank_score", None) is not None else 0.0,
                         "passes_threshold": (
                             c.rerank_score > settings.rerank_relevance_threshold
-                            if c.rerank_score is not None
-                            else None
+                            if getattr(c, "rerank_score", None) is not None
+                            else False
                         ),
                     }
                     for c in reranked
                 ],
+                column_config={
+                    "rerank_score": st.column_config.ProgressColumn(
+                        "Relevance Score", format="%.3f", min_value=0.0, max_value=1.0
+                    ),
+                    "tokens": st.column_config.NumberColumn("Tokens", format="%d"),
+                    "passes_threshold": st.column_config.CheckboxColumn("Threshold Met"),
+                },
                 hide_index=True,
-                width="stretch",
+                use_container_width=True,
             )
             with st.popover("Preview chunk text"):
                 for i, c in enumerate(reranked):
@@ -288,17 +255,11 @@ def render_pipeline(
         golden_row = load_golden_lookup().get(question)
         if golden_row and golden_row.get("required_sources"):
             required = golden_row["required_sources"]
-            st.caption(
-                "Precision = of the chunks we retrieved, how many were actually "
-                "relevant (per the golden set's labeled `required_sources`). "
-                "Recall = of the chunks that were actually relevant, how many did "
-                "we manage to retrieve. Rerank usually trades a bit of recall "
-                "(fewer chunks survive) for a lot more precision."
-            )
             fused_ids = [c.chunk_id for c in candidates]
             reranked_ids = [c.chunk_id for c in reranked]
             p_fused, r_fused = _precision_recall(fused_ids, required)
             p_reranked, r_reranked = _precision_recall(reranked_ids, required)
+            
             m1, m2, m3, m4 = st.columns(4)
             m1.metric(f"Precision@{len(fused_ids)} (fused)", f"{p_fused:.2f}")
             m2.metric("Recall (fused)", f"{r_fused:.2f}")
@@ -306,27 +267,21 @@ def render_pipeline(
             m4.metric("Recall (reranked)", f"{r_reranked:.2f}")
         else:
             st.caption(
-                "No labeled ground truth for this question, so no precision/recall "
-                "here — that needs a golden set entry with `required_sources` "
-                "(see `eval/golden_set.jsonl`). Try one of the example questions "
-                "on a fresh chat, or see the aggregate Ragas-judged numbers "
-                "(`context_precision` / `context_recall`) under **Eval history** "
-                "in the sidebar."
+                "No labeled ground truth for this question. Precision and recall "
+                "require ground-truth entries in `eval/golden_set.jsonl`."
             )
 
         st.markdown("### 5. Routing")
-        top_score = reranked[0].rerank_score if reranked and reranked[0].rerank_score is not None else None
+        top_score = reranked[0].rerank_score if reranked and getattr(reranked[0], "rerank_score", None) is not None else None
         if router_decision in (None, "retrieval_confirmed") and top_score is not None:
             st.caption(
                 f"Top rerank score ({top_score:.3f}) cleared the "
-                f"{settings.rerank_relevance_threshold} threshold — answered directly "
-                "from retrieval, no LLM router call needed."
+                f"{settings.rerank_relevance_threshold} threshold — answered directly from retrieval."
             )
         else:
             conf = f"{router_confidence:.2f}" if router_confidence is not None else "n/a"
             st.caption(
-                f"Retrieval was weak/empty, so the Claude router "
-                f"(`{settings.claude_router_model}`) was consulted — "
+                f"Router (`{settings.claude_router_model}`) evaluated query — "
                 f"decision: `{router_decision}` (confidence {conf})."
             )
 
@@ -339,7 +294,6 @@ def render_sources(reranked: list) -> None:
             st.caption("No internal sources used for this answer.")
             return
         for c in reranked:
-            # Support both object-style and dict-style metadata
             meta = getattr(c, "metadata", None) or (c if isinstance(c, dict) else {})
             if not isinstance(meta, dict):
                 meta = {}
@@ -349,11 +303,7 @@ def render_sources(reranked: list) -> None:
 
 
 def render_empty_state() -> None:
-    """Show a welcoming empty state with example questions. Prefers golden
-    set questions when available - those carry labeled ground truth, so
-    clicking one lights up the precision/recall panel in the pipeline
-    breakdown below (training-demo value: every example question doubles
-    as a working retrieval-quality demo)."""
+    """Show empty state using clean selection pills for example prompts."""
     st.info(
         "Ask anything about the knowledge base. "
         "Answers are grounded in internal documents whenever possible.",
@@ -361,13 +311,11 @@ def render_empty_state() -> None:
     )
     golden = load_golden_lookup()
     examples = list(golden.keys()) if golden else EXAMPLE_QUESTIONS
-    st.caption("Try one of these:")
-    cols = st.columns(len(examples))
-    for i, q in enumerate(examples):
-        with cols[i]:
-            if st.button(q, width="stretch", key=f"example_{i}"):
-                st.session_state._pending_question = q
-                st.rerun()
+    
+    selected_example = st.pills("Try an example question:", examples, selection_mode="single")
+    if selected_example:
+        st.session_state._pending_question = selected_example
+        st.rerun()
 
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -394,15 +342,10 @@ with st.sidebar:
             if st.button(
                 "Run eval now",
                 icon=":material/play_arrow:",
-                width="stretch",
-                help="Runs eval/run_eval.py's release gate in-process against "
-                "the live index and Claude — same checks CI runs on every PR.",
+                use_container_width=True,
+                help="Runs evaluation pipeline against golden dataset.",
             ):
-                with st.spinner(
-                    f"Running the eval gate on {golden_set_path} — "
-                    "asks the full pipeline every golden question, then "
-                    "scores them (Ragas + deterministic checks)..."
-                ):
+                with st.spinner("Running evaluation suite..."):
                     passed, log = run_eval_live(golden_set_path)
                 if passed:
                     st.success("Release gate: PASSED", icon=":material/check_circle:")
@@ -412,15 +355,15 @@ with st.sidebar:
                     st.code(log, language="text")
         else:
             st.caption(
-                "Live eval needs the eval extras: "
+                "Live eval needs additional packages: "
                 "`pip install -r eval/requirements-eval.txt`."
             )
 
         runs = db.get_recent_eval_runs(limit=20)
         if not runs:
-            st.caption("No eval runs recorded yet — run `python eval/run_eval.py eval/golden_set.jsonl`.")
+            st.caption("No eval runs recorded yet.")
         else:
-            runs = list(reversed(runs))  # chronological for the chart
+            runs = list(reversed(runs))
             st.line_chart(
                 {
                     "run_ts": [r.run_ts for r in runs],
@@ -442,17 +385,17 @@ with st.sidebar:
                         "context_precision": r.context_precision,
                         "answer_relevancy": r.answer_relevancy,
                     }
-                    for r in reversed(runs)  # newest first in the table
+                    for r in reversed(runs)
                 ],
                 hide_index=True,
-                width="stretch",
+                use_container_width=True,
             )
 
     st.divider()
     if st.button(
         "Clear conversation",
         icon=":material/delete:",
-        width="stretch",
+        use_container_width=True,
         type="secondary",
     ):
         st.session_state.history = []
@@ -469,7 +412,8 @@ for turn in st.session_state.history:
     with st.chat_message(turn["role"], avatar=avatar):
         st.markdown(turn["content"])
         if turn.get("meta"):
-            render_meta(*turn["meta"])
+            with st.container(border=True):
+                render_meta(*turn["meta"])
         if "sources" in turn:
             render_pipeline(
                 turn.get("question", ""),
@@ -480,8 +424,6 @@ for turn in st.session_state.history:
             )
             render_sources(turn["sources"])
 
-# Support clicking an example question. st.chat_input must be called on every
-# run (regardless of a pending example) or the widget disappears for that run.
 typed_question = st.chat_input("Ask a question about the knowledge base...")
 question = st.session_state.pop("_pending_question", None) or typed_question
 
@@ -492,11 +434,17 @@ if question:
 
     with st.chat_message("assistant", avatar=":material/smart_toy:"):
         try:
-            with st.spinner("Thinking..."):
+            with st.status("Processing query pipeline...", expanded=True) as status:
+                st.write("Performing hybrid retrieval & fusion...")
                 result = ask(question)
+                st.write("Reranking results and confirming groundedness...")
+                status.update(label="Response generated", state="complete", expanded=False)
 
             st.markdown(result["answer"])
-            render_meta(result["source_type"], result.get("groundedness_verdict"))
+            
+            with st.container(border=True):
+                render_meta(result["source_type"], result.get("groundedness_verdict"))
+
             reranked = result.get("reranked") or []
             render_pipeline(
                 question,
@@ -526,5 +474,3 @@ if question:
                 icon=":material/error:",
             )
             st.caption(f"Details: {type(exc).__name__}")
-            # Keep the user message but do not add a broken assistant turn
-            # so the conversation stays clean.
