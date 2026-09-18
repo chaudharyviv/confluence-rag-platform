@@ -62,6 +62,7 @@ EXAMPLE_QUESTIONS = [
     "What is the main purpose of this knowledge base?",
     "Summarize the key policies",
     "How do I get started?",
+    "How does Claude Sonnet 5 compare to GPT-5.6 on cost and benchmarks?",
 ]
 
 
@@ -73,7 +74,7 @@ def load_golden_lookup() -> dict[str, dict]:
     just set overlap against what retrieval actually returned. Missing
     file is fine (e.g. a deploy without the eval extras) - demo panel
     just won't have ground truth to compare against."""
-    path = Path(__file__).parent / "eval" / "golden_set.jsonl"
+    path = Path(__file__).parent / settings.golden_set_path
     if not path.exists():
         return {}
     lookup: dict[str, dict] = {}
@@ -388,7 +389,7 @@ with st.sidebar:
         )
 
     with st.expander("Eval history (Ragas)", expanded=False):
-        golden_set_path = str(Path(__file__).parent / "eval" / "golden_set.jsonl")
+        golden_set_path = str(Path(__file__).parent / settings.golden_set_path)
         if ragas_available():
             if st.button(
                 "Run eval now",

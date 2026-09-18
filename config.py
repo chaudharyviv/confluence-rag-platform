@@ -70,6 +70,13 @@ class Settings:
     # --- Storage: relational (audit / eval / sync state) ---
     database_url: str = field(default_factory=lambda: _get("DATABASE_URL", "sqlite:///./local.db"))
 
+    # --- Eval / demo ---
+    # Which golden set app.py's empty-state example buttons and sidebar "Run
+    # eval now" pull from. Defaults to the real golden set CI scores on every
+    # PR; override to point at a demo-only copy (e.g. one with extra example
+    # questions that aren't meant to be graded) without touching that file.
+    golden_set_path: str = field(default_factory=lambda: _get("GOLDEN_SET_PATH", "eval/golden_set.jsonl"))
+
     # --- Retrieval tuning ---
     retrieve_top_k: int = field(default_factory=lambda: int(_get("RETRIEVE_TOP_K", "20")))
     rerank_top_k: int = field(default_factory=lambda: int(_get("RERANK_TOP_K", "5")))

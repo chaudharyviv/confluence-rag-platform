@@ -167,6 +167,7 @@ Every setting is read once, in [`config.py`](config.py), from `os.environ` - pop
 | `CHROMA_COLLECTION` | `kb_chunks` | |
 | `BM25_INDEX_PATH` | `./bm25_index.pkl` | |
 | `DATABASE_URL` | `sqlite:///./local.db` | Swap for a Neon Postgres URL to persist audit history across deployed sessions (see below). |
+| `GOLDEN_SET_PATH` | `eval/golden_set.jsonl` | Which golden set `app.py`'s example-question buttons and "Run eval now" sidebar action read from. Point at a demo-only copy (e.g. `eval/demo_golden_set.jsonl`) to add example questions without touching what CI's release gate scores. |
 | `RETRIEVE_TOP_K` | `20` | Candidates pulled from each of dense/sparse before fusion. |
 | `RERANK_TOP_K` | `5` | Chunks kept after cross-encoder reranking. |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | ~22M params, CPU-friendly; deliberately not a 500M+-param reranker on a memory-constrained host. |
