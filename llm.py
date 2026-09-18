@@ -106,7 +106,7 @@ def generate_answer(question: str, chunks: list[RetrievedChunk]) -> str:
     context = _format_context(chunks)
     resp = _client.messages.create(
         model=settings.claude_model,
-        max_tokens=1024,
+        max_tokens=settings.claude_max_tokens,
         system=(
             "Answer the question using ONLY the numbered sources provided. "
             "Cite sources inline like [1], [2]. If the sources don't contain "
@@ -130,7 +130,7 @@ def generate_external_answer(question: str) -> str:
     audit log - it should never be presented as internally grounded."""
     resp = _client.messages.create(
         model=settings.claude_model,
-        max_tokens=1024,
+        max_tokens=settings.claude_max_tokens,
         system=(
             "Answer from your general knowledge. Be explicit that this is not "
             "sourced from the user's curated knowledge base and may be out of date."

@@ -38,6 +38,13 @@ class Settings:
     embedding_model: str = field(default_factory=lambda: _get("EMBEDDING_MODEL", "text-embedding-3-small"))
     claude_model: str = field(default_factory=lambda: _get("CLAUDE_MODEL", "claude-sonnet-5"))
     claude_router_model: str = field(default_factory=lambda: _get("CLAUDE_ROUTER_MODEL", "claude-haiku-4-5-20251001"))
+    # Output cap for the two generation-tier (claude_model / Sonnet) calls -
+    # generate_answer and generate_external_answer in llm.py. This is what
+    # drives Sonnet spend the most (router/groundedness stay on the cheaper
+    # claude_router_model with their own small fixed caps) - tune this down
+    # if cost is the concern, since real answers here have run well under
+    # 1024 tokens in practice.
+    claude_max_tokens: int = field(default_factory=lambda: int(_get("CLAUDE_MAX_TOKENS", "1024")))
 
     # --- Confluence source ---
     # Not required=True here: only reindex.py needs these, and the deployed
