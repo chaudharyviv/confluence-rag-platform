@@ -400,7 +400,7 @@ with st.sidebar:
             ):
                 with st.spinner(
                     f"Running the eval gate on {golden_set_path} — "
-                    "asks the full pipeline all 4 golden questions, then "
+                    "asks the full pipeline every golden question, then "
                     "scores them (Ragas + deterministic checks)..."
                 ):
                     passed, log = run_eval_live(golden_set_path)

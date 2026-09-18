@@ -17,6 +17,10 @@ Not every row is scored the same way:
     Ragas to compare against (per Ragas' own assumption that the question is
     answerable) - these are asserted against router_decision instead, and
     never enter the Ragas call.
+  - rows in NO_GROUND_TRUTH (e.g. category "comparison") are answerable but
+    also have no real ground truth to score against - they're run and their
+    groundedness_verdict is logged, but they're excluded from the Ragas
+    call so a placeholder expected_answer doesn't skew the aggregate score.
   - exact_lookup rows carry a structured `expected_fields` dict, checked with
     plain normalized comparison instead of (or alongside) the LLM-judged
     Ragas metrics - cheaper, deterministic, reproducible.
@@ -47,6 +51,12 @@ from graph import ask
 # Categories Ragas can't meaningfully score: there's no answerable ground
 # truth to compare against, only a routing decision to check.
 NOT_RAGAS_SCORABLE = {"out_of_domain", "needs_external"}
+
+# Categories that are answerable (so router-decision checking doesn't apply)
+# but still have no labeled ground truth for Ragas to compare against - e.g.
+# a demo-only row whose "expected_answer" is a note-to-self, not a real
+# answer. Excluded from Ragas scoring but still run and logged.
+NO_GROUND_TRUTH = {"comparison"}
 
 
 def _env_float(name: str, default: float) -> float:
@@ -151,9 +161,14 @@ def run(
                 "required_sources": item.get("required_sources", []),
                 "answerable": item.get("answerable"),
                 "expected_fields": item.get("expected_fields"),
+                "groundedness_verdict": result.get("groundedness_verdict"),
             }
         )
-        print(f"  ran: {item['question'][:60]!r} -> router={result['router_decision']}")
+        print(
+            f"  ran: {item['question'][:60]!r} -> "
+            f"router={result['router_decision']} "
+            f"groundedness={result.get('groundedness_verdict')}"
+        )
 
     # ---------- deterministic checks (no LLM judge involved) ----------
 
@@ -180,7 +195,10 @@ def run(
 
     # ---------- Ragas (LLM-judged) metrics, only for scorable rows ----------
 
-    ragas_rows = [r for r in rows if r["category"] not in NOT_RAGAS_SCORABLE]
+    ragas_rows = [
+        r for r in rows
+        if r["category"] not in NOT_RAGAS_SCORABLE and r["category"] not in NO_GROUND_TRUTH
+    ]
     metric_cols = ["context_precision", "context_recall", "faithfulness", "answer_relevancy"]
     scores: dict = {}
 
