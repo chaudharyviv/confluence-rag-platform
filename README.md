@@ -16,6 +16,7 @@ See [`production-rag-architecture.md`](production-rag-architecture.md) for the o
 - **Section-aware chunking** - splits on heading boundaries first, then a token-aware sliding window within a section; tables and code fences are never split mid-block.
 - **Host-agnostic by config, not by code fork** - `STORAGE_MODE` and `DATABASE_URL` are the only two knobs that change between a laptop, a VPS, Streamlit Community Cloud, or a GitHub Action.
 - **Audit trail + eval history** - every query and every Ragas eval run is logged to a real relational schema (SQLite by default, Postgres/Neon optional), not a local JSON file.
+- **Pipeline transparency in the UI** - every answer ships with an expandable "How this answer was built" panel showing the dense vs. sparse hit lists, the RRF fusion table, the reranked/cut chunks, a live precision@k/recall@k readout against the golden set (when the question has labeled `required_sources`), and which routing path fired. A sidebar panel can also trigger the same `eval/run_eval.py` release gate in-process against the live index and chart `eval_runs` history over time.
 
 ## Architecture
 
@@ -105,7 +106,7 @@ stateDiagram-v2
 
 | File | Responsibility |
 |---|---|
-| [`app.py`](app.py) | Streamlit chat UI: source-type + groundedness badges, expandable sources, `st.secrets` → `os.environ` bridge for Community Cloud. |
+| [`app.py`](app.py) | Streamlit chat UI: source-type + groundedness badges, an expandable "How this answer was built" pipeline breakdown (dense/sparse/RRF/rerank tables, live precision@k/recall@k against the golden set, routing rationale), expandable sources, an in-process "run the eval gate now" sidebar action, an `eval_runs` history chart, and the `st.secrets` → `os.environ` bridge for Community Cloud. |
 | [`graph.py`](graph.py) | LangGraph orchestration - the state machine above. |
 | [`config.py`](config.py) | Single source of truth for all settings; everything else reads `settings`, never `os.environ` directly. |
 | [`confluence_client.py`](confluence_client.py) | Minimal Confluence Cloud REST client - lists pages, fetches storage-format body + version. |
@@ -155,7 +156,7 @@ Every setting is read once, in [`config.py`](config.py), from `os.environ` - pop
 | `OPENAI_API_KEY` | - (required) | Used only for embeddings. |
 | `ANTHROPIC_API_KEY` | - (required) | Used for routing, generation, groundedness. |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | 1536-dim. |
-| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Generation + external fallback. |
+| `CLAUDE_MODEL` | `claude-sonnet-5` | Generation + external fallback (see `claude_model` default in [`config.py`](config.py); `.env.example` currently pins `claude-sonnet-4-6` explicitly, which overrides this default whenever `.env` is loaded). |
 | `CLAUDE_ROUTER_MODEL` | `claude-haiku-4-5-20251001` | Router + groundedness (classification-tier, not generation-tier). |
 | `CONFLUENCE_BASE_URL` / `CONFLUENCE_EMAIL` / `CONFLUENCE_API_TOKEN` / `CONFLUENCE_SPACE_KEY` | - | Only needed to run `reindex.py`; the deployed app doesn't require Confluence credentials to serve queries. |
 | `DOMAIN_DESCRIPTION` | `a curated knowledge base` | Feeds the router's classification prompt - change this, not code, to repoint the whole system at a different topic. |
@@ -209,11 +210,26 @@ metadata: { page_id, title, breadcrumb, section, url, version, chunk_index, toke
 ```bash
 pip install -r eval/requirements-eval.txt
 python eval/run_eval.py eval/golden_set.jsonl
+
+# useful local overrides (CI passes these as flags; each also reads an env var):
+python eval/run_eval.py eval/golden_set.jsonl \
+  --min-faithfulness 0.7 --min-context-recall 0.7 \
+  --require-exact-lookup-pass --require-router-match --require-source-coverage
 ```
 
-Kept in a separate requirements file so the deployed Streamlit app doesn't carry Ragas/LangChain's weight - eval only needs to run locally or in CI.
+Kept in a separate requirements file so the deployed Streamlit app doesn't carry Ragas/LangChain's weight - eval only needs to run locally or in CI. CI runs this as the release gate ([`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml)), triggered on PRs touching `parsing.py`, `vectorstore.py`, `llm.py`, `graph.py`, or `reranker.py`. There's no `pytest` suite - this harness is the correctness check for retrieval/generation changes.
 
-Write your own golden set as you author Confluence pages - a couple of QA pairs per page, with real ground truth, is a much better eval-authoring workflow than reverse-engineering questions from someone else's docs. [`eval/golden_set.jsonl`](eval/golden_set.jsonl) includes two edge-case rows (an out-of-date question, an out-of-domain question) meant to be eyeballed against the printed `router=` output rather than scored as faithfulness/precision numbers - Ragas' metrics assume an in-domain, answerable question. Results are written to the `eval_runs` table so quality is tracked as a trend, not just a pass/fail on the latest commit.
+Each golden-set row is labeled with a `category`, and `run_eval.py` scores each category differently rather than forcing everything through the same LLM judge:
+
+| Category | How it's scored |
+|---|---|
+| `exact_lookup` | Plain normalized string match against `expected_fields` - no LLM judge, since these are single-fact answers (a date, a number) that a judge would just add noise to. |
+| `out_of_domain`, `needs_external` | Asserted against `router_decision` directly (did the graph actually refuse / route external?) - not answerable questions, so Ragas metrics don't apply. |
+| everything else (answerable, in-domain) | Scored with Ragas (`context_precision`, `context_recall`, `faithfulness`, `answer_relevancy`) against the live graph's retrieved chunks and generated answer. |
+
+The gate flags above (`--min-faithfulness`, `--min-context-recall`, `--require-exact-lookup-pass`, `--require-router-match`, `--require-source-coverage`) let CI and local runs tune how strict "pass" means without touching code - each defaults to permissive (`0.0` / `True`) unless overridden by flag or the matching `MIN_*`/`REQUIRE_*` env var.
+
+Write your own golden set as you author Confluence pages - a couple of QA pairs per page, with real ground truth, is a much better eval-authoring workflow than reverse-engineering questions from someone else's docs. [`eval/golden_set.jsonl`](eval/golden_set.jsonl) includes two edge-case rows (an out-of-date question, an out-of-domain question) meant to exercise the router-decision check rather than Ragas scoring. Results are written to the `eval_runs` table so quality is tracked as a trend, not just a pass/fail on the latest commit - the same history the Streamlit sidebar charts under **Eval history**.
 
 ## What's deliberately not built yet
 
