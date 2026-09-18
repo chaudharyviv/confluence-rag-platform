@@ -2,11 +2,9 @@
 # Cloud, which has ephemeral disk). If you're running STORAGE_MODE=local
 # somewhere with a persistent volume, you don't need this - just run
 # `python reindex.py` there directly (manually or your own cron).
-name: Scheduled reindex
+name: Manual reindex
 
 on:
-  schedule:
-    - cron: "0 2 * * *"
   workflow_dispatch: {}
 
 jobs:
