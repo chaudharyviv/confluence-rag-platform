@@ -1,8 +1,6 @@
 """
 Parses Confluence's storage-format XHTML into structured chunks that keep
-headings, tables, and code blocks intact - instead of flattening everything
-to prose the way the original repos did (which is exactly the content most
-likely to be asked about: config values, comparison tables, code samples).
+headings, tables, and code blocks intact.
 """
 from __future__ import annotations
 
@@ -103,8 +101,7 @@ def _walk_body_to_blocks(soup: BeautifulSoup) -> list[tuple[str, str]]:
             blocks.append(("code", _code_macro_to_fenced_block(node)))
             return
 
-        # Don't descend into elements we've already fully handled above,
-        # or we'd double-emit their text as a paragraph too.
+        # Don't descend into elements we've already fully handled above,# since their children are not interesting for us.
         if name in ("table",):
             return
 
@@ -121,7 +118,6 @@ def _walk_body_to_blocks(soup: BeautifulSoup) -> list[tuple[str, str]]:
 
     handle(soup)
     return blocks
-
 
 def parse_storage_html(html: str) -> list[Section]:
     """Turn Confluence storage-format HTML into heading-delimited sections."""

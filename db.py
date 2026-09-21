@@ -50,7 +50,7 @@ class QueryAuditLog(Base):
     chunk_ids = Column(JSON, nullable=True)  # list[str], the chunks actually used
     groundedness_verdict = Column(String, nullable=True)  # supported | partial | unsupported | n/a
     answer = Column(Text, nullable=False)
-    source_type = Column(String, nullable=False)  # internal | external | refused
+    source_type = Column(String, nullable=False)  # internal | external | web | refused
     latency_ms = Column(Integer, nullable=True)
     ts = Column(DateTime, default=_now)
 

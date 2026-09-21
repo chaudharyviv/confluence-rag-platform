@@ -21,7 +21,7 @@ try:
     for key, value in st.secrets.items():
         os.environ.setdefault(key, str(value))
 except FileNotFoundError:
-    pass  # no secrets.toml - fine locally, .env handles it instead
+    pass  
 
 import db
 from config import settings
@@ -43,7 +43,8 @@ if "history" not in st.session_state:
 
 SOURCE_BADGE = {
     "internal": ("Answered from knowledge base", ":material/menu_book:", "blue"),
-    "external": ("Answered from general knowledge — may be out of date", ":material/public:", "orange"),
+    "external": ("Answered from general knowledge - may be out of date", ":material/public:", "orange"),
+    "web": ("Answered from live web search", ":material/travel_explore:", "violet"),
     "refused": ("Out of scope", ":material/block:", "gray"),
 }
 VERDICT_BADGE = {
@@ -126,7 +127,7 @@ def _chunk_meta(c) -> dict:
 
 def _candidate_row(c) -> dict:
     return {
-        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
+        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "-"),
         "dense_rank": c.dense_rank if c.dense_rank is not None else 0,
         "sparse_rank": c.sparse_rank if c.sparse_rank is not None else 0,
         "rrf_score": round(c.rrf_score, 4) if getattr(c, "rrf_score", None) is not None else 0.0,
@@ -142,7 +143,7 @@ def render_pipeline(
 ) -> None:
     """Show the retrieval -> fusion -> rerank -> routing breakdown."""
     with st.expander("How this answer was built", icon=":material/route:", expanded=False):
-        st.markdown("### 1. Retrieval — two independent searches")
+        st.markdown("### 1. Retrieval - two independent searches")
         st.caption(
             "Dense search (Chroma) embeds the query for semantic matching. "
             "Sparse search (BM25) tracks exact keyword overlap. Both run on every query."
@@ -162,7 +163,7 @@ def render_pipeline(
                 st.dataframe(
                     [
                         {
-                            "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
+                            "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "-"),
                             "dense_rank": c.dense_rank,
                         }
                         for c in dense_only
@@ -179,7 +180,7 @@ def render_pipeline(
                 st.dataframe(
                     [
                         {
-                            "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
+                            "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "-"),
                             "sparse_rank": c.sparse_rank,
                         }
                         for c in sparse_only
@@ -191,7 +192,7 @@ def render_pipeline(
             else:
                 st.caption("No sparse hits.")
 
-        st.markdown("### 2. Fusion — Reciprocal Rank Fusion")
+        st.markdown("### 2. Fusion - Reciprocal Rank Fusion")
         st.caption(
             f"Combines both rankings via `score = Σ 1 / (k + rank)` (k={settings.rrf_k}). "
             f"{len(candidates)} unique candidates merged."
@@ -213,7 +214,7 @@ def render_pipeline(
         else:
             st.caption("No candidates retrieved.")
 
-        st.markdown("### 3. Rerank — cross-encoder rescoring")
+        st.markdown("### 3. Rerank - cross-encoder rescoring")
         st.caption(
             f"Jointly rescores (question, chunk) pairs. Top {settings.rerank_top_k} candidates survive."
         )
@@ -221,8 +222,8 @@ def render_pipeline(
             st.dataframe(
                 [
                     {
-                        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "—"),
-                        "section": _chunk_meta(c).get("section", "—"),
+                        "title": _chunk_meta(c).get("breadcrumb") or _chunk_meta(c).get("title", "-"),
+                        "section": _chunk_meta(c).get("section", "-"),
                         "tokens": _chunk_meta(c).get("token_count", 0),
                         "rerank_score": c.rerank_score if getattr(c, "rerank_score", None) is not None else 0.0,
                         "passes_threshold": (
@@ -251,7 +252,7 @@ def render_pipeline(
         else:
             st.caption("No chunks survived reranking.")
 
-        st.markdown("### 4. Precision & recall — against labeled ground truth")
+        st.markdown("### 4. Precision & recall - against labeled ground truth")
         golden_row = load_golden_lookup().get(question)
         if golden_row and golden_row.get("required_sources"):
             required = golden_row["required_sources"]
@@ -276,12 +277,12 @@ def render_pipeline(
         if router_decision in (None, "retrieval_confirmed") and top_score is not None:
             st.caption(
                 f"Top rerank score ({top_score:.3f}) cleared the "
-                f"{settings.rerank_relevance_threshold} threshold — answered directly from retrieval."
+                f"{settings.rerank_relevance_threshold} threshold - answered directly from retrieval."
             )
         else:
             conf = f"{router_confidence:.2f}" if router_confidence is not None else "n/a"
             st.caption(
-                f"Router (`{settings.claude_router_model}`) evaluated query — "
+                f"Router (`{settings.claude_router_model}`) evaluated query - "
                 f"decision: `{router_decision}` (confidence {conf})."
             )
 
@@ -328,11 +329,11 @@ with st.sidebar:
 
     with st.expander("Technical details", expanded=False):
         st.caption(
-            f":material/database: Vector store — "
+            f":material/database: Vector store - "
             f"`{settings.chroma_persist_dir}` ({settings.storage_mode} mode)"
         )
         st.caption(
-            f":material/history: Audit DB — "
+            f":material/history: Audit DB - "
             f"`{settings.database_url.split('://')[0]}`"
         )
 
@@ -378,7 +379,7 @@ with st.sidebar:
                 [
                     {
                         "run_ts": r.run_ts,
-                        "git_sha": (r.git_sha or "—")[:8],
+                        "git_sha": (r.git_sha or "-")[:8],
                         "n": r.num_questions,
                         "faithfulness": r.faithfulness,
                         "context_recall": r.context_recall,

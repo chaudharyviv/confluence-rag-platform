@@ -9,3 +9,5 @@ beautifulsoup4>=4.12
 requests>=2.32
 SQLAlchemy>=2.0
 python-dotenv>=1.0
+pytest>=8.0
+

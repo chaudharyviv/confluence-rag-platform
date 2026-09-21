@@ -4,17 +4,8 @@ LangGraph orchestration - retrieval-informed routing:
 START -> retrieve -> rerank -> route_after_rerank (function, no LLM call)
     top rerank score > threshold --> generate -> groundedness -> log -> END
     weak/no match               --> router (Claude call) -> route_after_router
-        needs_external --> external_search -> log -> END
+        needs_external --> external_search (Tavily web search, else Claude alone) -> log -> END
         out_of_domain  --> refuse -> log -> END
-
-This replaced an earlier version where a Claude router classified the
-question BEFORE retrieval ever ran - which meant "current flagship"-style
-phrasing could get routed external even when the knowledge base had an
-exact, current answer sitting in the index. Retrieval now runs first and is
-the primary signal; the LLM router is only consulted as a fallback classifier
-when retrieval itself comes up weak (empty, or the top match doesn't look
-relevant) - at that point the real question is "is this out of scope, or
-does it need live info," which retrieval strength can't answer by itself.
 """
 from __future__ import annotations
 
@@ -25,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 import db
 import llm
+import websearch
 from config import settings
 from reranker import rerank as rerank_chunks
 from vectorstore import RetrievedChunk, get_store
@@ -116,7 +108,21 @@ def groundedness_node(state: RAGState) -> RAGState:
 
 
 def external_search_node(state: RAGState) -> RAGState:
-    answer = llm.generate_external_answer(state["question"])
+    web_results = websearch.search_web(state["question"])
+    answer = llm.generate_external_answer(state["question"], web_results)
+    if web_results:
+        # Sources go into the answer text itself, so they show in the UI and
+        # are preserved in query_audit_log without a schema change.
+        links = "\n".join(f"{i}. [{r.title}]({r.url})" for i, r in enumerate(web_results, start=1))
+        return {
+            "answer": (
+                "*This question needs current information beyond the curated knowledge base. "
+                f"Answered from a live web search:*\n\n{answer}\n\n**Web sources**\n{links}"
+            ),
+            "source_type": "web",
+            "reranked": [],
+            "groundedness_verdict": "n/a",
+        }
     return {
         "answer": f"*This question needs current information beyond the curated knowledge base:*\n\n{answer}",
         "source_type": "external",

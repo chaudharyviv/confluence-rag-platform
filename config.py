@@ -71,14 +71,10 @@ class Settings:
     database_url: str = field(default_factory=lambda: _get("DATABASE_URL", "sqlite:///./local.db"))
 
     # --- Eval / demo ---
-    # Which golden set app.py's empty-state example buttons and sidebar "Run
-    # eval now" pull from. Defaults to the real golden set CI scores on every
-    # PR; override to point at a demo-only copy (e.g. one with extra example
-    # questions that aren't meant to be graded) without touching that file.
     golden_set_path: str = field(default_factory=lambda: _get("GOLDEN_SET_PATH", "eval/golden_set.jsonl"))
 
     # --- Retrieval tuning ---
-    retrieve_top_k: int = field(default_factory=lambda: int(_get("RETRIEVE_TOP_K", "20")))
+    retrieve_top_k: int = field(default_factory=lambda: int(_get("RETRIEVE_TOP_K", "10")))
     rerank_top_k: int = field(default_factory=lambda: int(_get("RERANK_TOP_K", "5")))
     reranker_model: str = field(default_factory=lambda: _get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
     rrf_k: int = field(default_factory=lambda: int(_get("RRF_K", "60")))  # standard RRF constant
@@ -91,8 +87,11 @@ class Settings:
         default_factory=lambda: float(_get("RERANK_RELEVANCE_THRESHOLD", "0.0"))
     )
 
-    # --- Optional external fallback ---
-    serpapi_api_key: str = field(default_factory=lambda: _get("SERPAPI_API_KEY", ""))
+    # --- Optional external fallback: live web search (Tavily) ---
+    # Empty key = no web search; the external route then answers from Claude's
+    # general knowledge (still labelled external).
+    tavily_api_key: str = field(default_factory=lambda: _get("TAVILY_API_KEY", ""))
+    web_search_max_results: int = field(default_factory=lambda: int(_get("WEB_SEARCH_MAX_RESULTS", "5")))
 
     def chunking_ready(self) -> Path:
         p = Path(self.chroma_persist_dir)
